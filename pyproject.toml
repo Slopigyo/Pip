@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobwolf-bench"
+version = "0.1.0"
+description = "A Windows-local, private Person Map and insight workbench"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.4",
+  "uvicorn==0.52.3",
+  "starlette==1.6.0",
+  "pypdf==6.21.2",
+]
+
+[project.optional-dependencies]
+test = ["httpx==0.28.1"]
+
+[project.scripts]
+jobwolf = "jobwolf.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jobwolf = ["web/*.html", "web/*.css", "web/*.js"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src", "tests"]
+pythonVersion = "3.14"
+pythonPlatform = "Windows"
+typeCheckingMode = "basic"
+exclude = [".venv", "build", "dist"]

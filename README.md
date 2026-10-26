@@ -1,14 +1,32 @@
-# JobWolf
+# Pip — Personal Insight Pathfinder
 
-> **A private, local-first guide for finding work, places, and life paths that actually fit the person.**
+> **Find Yourself.**
 
-JobWolf is not primarily a job board, résumé optimizer, recruiter tool, or application bot.
+Pip (formerly **JobWolf**) is a **private, local-first guide** mapping **Places, Interests & Possibilities** to help a person find work, places, and life paths that actually fit.
+
+Pip is not primarily a job board, résumé optimizer, recruiter tool, or application bot.
 
 Its purpose is more fundamental:
 
 > **Help a person understand where they may belong, discover possibilities they would not have thought to search for, and turn that understanding into a practical plan.**
 
-A conventional job site begins with a title, keyword, and location. JobWolf begins with the person.
+A conventional job site begins with a title, keyword, and location. Pip begins with the person.
+
+Historical **JobWolf** references below describe the same project. The `jobwolf` package, launcher, storage, and wire-format names remain unchanged.
+
+## Run the Windows prototype
+
+The chat-first Windows prototype supports streaming Ollama replies (initial preference: `Lyra:latest`). Deliberate structured extraction, a reviewed/editable Person Map, exploratory possibilities, portable insight/Search Brief exports, and manual handoff to an existing chat tool live in the collapsed **Notebook & bench tools** (`bench-tools`). Optional résumé intake supports locally parsed PDF/DOCX/TXT/Markdown or pasted text, editable previews, explicit excerpt selection, and source-cited notes. Scope: the contiguous 48 United States plus Washington, DC.
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -c constraints.txt -e ".[test]"
+.venv\Scripts\python.exe -m jobwolf
+```
+
+After installation, `start-bench.cmd` launches it too. Read [the prototype guide](docs/PROTOTYPE.md) for the workflow, privacy/recovery notes, and current limits; see [dependency and licensing choices](docs/DEPENDENCIES.md) before packaging or choosing a project license.
+
+Private payloads are encrypted with Windows DPAPI before SQLite persistence—not whole-file SQLite encryption. JSON and Markdown exports are deliberately plaintext. The app has no live web browsing, verified world-data catalog, telemetry, or automatic cloud fallback; generated possibilities are hypotheses for exploration.
 
 ---
 
@@ -402,8 +420,10 @@ There is something intentionally hopeful in that idea. Technology should help pe
 
 ## Status
 
-Early concept / MVP architecture.
+Early Windows-local chat-first prototype with open-bench tools; not a packaged public product.
 
-The immediate development target is a local prototype capable of conducting a conversational interview, creating and editing a persistent Person Map, identifying high-value unknowns, and producing useful possibilities and a Search Brief.
+The first implementation covers conversational experiments, an editable persistent Person Map, explicit review of model proposals, exploratory possibilities, feedback, and a portable Search Brief. Its small local architecture is intended to test self-insight before expanding research integrations or public-product packaging.
+
+The [next-phase plan](docs/NEXT_PHASE.md) now includes connected-path discovery and optional reviewed résumé intake: local previews, saved text snapshots, selected excerpts for chat or Person Map proposals, citations, and deletion. Workspace JSON v1 upgrades to v2 on the next save without a reset; the database path is unchanged. Research/comparison tools and speech-input evaluation remain planned. Model insight quality still depends on the selected model and user review.
 
 Licensing and long-term commercial packaging remain open design decisions.

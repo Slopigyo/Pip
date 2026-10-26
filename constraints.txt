@@ -1,0 +1,21 @@
+# Runtime versions exercised on Windows / Python 3.14. Not a cross-platform hash lock.
+# Direct packages are also pinned in pyproject.toml.
+fastapi==0.141.1
+pydantic==2.13.4
+uvicorn==0.52.3
+starlette==1.6.0
+pypdf==6.21.2
+anyio==4.14.2
+annotated-types==0.8.0
+annotated-doc==0.0.5
+pydantic-core==2.46.4
+typing-extensions==4.15.0
+typing-inspection==0.4.4
+h11==0.16.0
+click==8.4.2
+idna==3.11
+colorama==0.4.6
+# Optional HTTP test dependencies; not part of the runtime installation.
+httpx==0.28.1
+httpcore==1.0.9
+certifi==2026.1.4

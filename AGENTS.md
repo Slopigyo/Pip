@@ -2,7 +2,16 @@
 
 This file is the working contract for coding agents contributing to JobWolf.
 
-Read `README.md` before making architectural or product changes.
+Read `README.md` before making architectural or product changes. Read the user-authored `Design.md` before future UI or product choices.
+
+### Pip UI and compatibility
+
+**Pip — Personal Insight Pathfinder** (formerly JobWolf) is the user-facing name: **Places, Interests & Possibilities** · **Find Yourself.** Historical JobWolf references below retain the same mission and technical constraints.
+
+- Evolve the chat-first UI incrementally toward a warm, grounded field companion: practical field-guide/workshop-notebook styling, not corporate HR software or a generic chatbot.
+- The weasel mascot is a later design step. Do not invent mascot artwork or a replacement character now.
+- Ordinary chat must not automatically mutate the Person Map or produce proposals. Keep structured extraction, discovery, and briefs deliberate, with explicit selected context and review in the collapsed **Notebook & bench tools** (`bench-tools`).
+- Do not rename the `jobwolf` package, storage identifiers, or wire-format names without an explicit migration path. Keep `start-bench.cmd` and the existing `%LOCALAPPDATA%\JobWolfBench\workspace.sqlite3` workspace unchanged for this UI rebrand; no reset is required.
 
 ---
 

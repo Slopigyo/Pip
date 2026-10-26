@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light">
+  <title>Pip — Personal Insight Pathfinder</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <header class="site-header">
+    <div class="brand"><h1>Pip</h1><div><strong>Personal Insight Pathfinder</strong><p>Places, Interests &amp; Possibilities</p></div></div>
+    <div class="brand-aside"><span class="tagline">Find Yourself.</span><span class="badge">Local prototype</span></div>
+  </header>
+  <div class="shell">
+    <noscript><p class="notice warning">JavaScript is required for this local prototype. Enable it, then reopen the startup link printed by Pip.</p></noscript>
+    <section class="connection-bar" aria-label="Workspace connection">
+      <p id="status-message" role="status" aria-live="polite" aria-atomic="true">Connecting to your local notebook…</p>
+      <button id="reload-state" type="button" disabled>Reload state</button>
+    </section>
+    <div id="startup-notice" class="notice warning" role="alert" hidden></div>
+    <div id="error-notice" class="notice error" role="alert" hidden></div>
+    <p id="sync-notice" class="notice warning" hidden>The result of the last request is uncertain or this tab is out of date. Reload state before making another change. A timed-out inference may still be running; do not immediately submit it again.</p>
+
+    <main id="main" tabindex="-1" hidden>
+      <section id="conversation" class="panel chat-panel" aria-labelledby="conversation-title">
+        <div class="chat-heading"><div><h2 id="conversation-title">Room to think out loud.</h2><p class="small muted">A story, a sticking point, a possibility. Start wherever you are.</p></div><span id="message-count" class="count">0 saved</span></div>
+        <div class="provider-bar">
+          <div><label for="provider-select">Talk with</label><select id="provider-select" data-lock><option value="ollama">Ollama — local model</option><option value="manual">Manual handoff — Zed / ChatGPT</option></select></div>
+          <div id="chat-model"><label for="model-select">Installed model</label><select id="model-select" data-lock><option value="">Choose an installed model</option></select></div>
+        </div>
+        <details class="connection-details">
+          <summary>Connection &amp; privacy</summary>
+          <p id="model-status" class="help" role="status">Models have not been loaded.</p>
+          <p id="model-endpoint" class="small muted"></p>
+          <button id="refresh-models" type="button" data-lock>Refresh models</button>
+          <p class="help">Chat sends a bounded selection of recent conversation, reviewed map notes, and excerpts explicitly attached to that message to the displayed Ollama endpoint. Use local weights for local inference. Manual handoff sends nothing automatically.</p>
+          <p class="help">Windows DPAPI encrypts saved workspace payloads, not database metadata, exports, copied text, or memory. No telemetry or automatic cloud fallback. Exploration covers the contiguous US48 + DC; Pip cannot browse or verify world facts yet.</p>
+        </details>
+        <div id="message-list" class="message-list scroll-region" role="log" aria-live="polite" aria-relevant="additions" tabindex="0" aria-label="Conversation with Pip"></div>
+        <div class="chat-activity"><p id="chat-status" class="small muted" role="status" aria-live="polite" aria-atomic="true">No need to have it all figured out.</p><button id="retry-reply" type="button" hidden>Retry reply</button><button id="jump-latest" type="button" hidden>Latest ↓</button></div>
+        <form id="message-form" class="composer">
+          <label for="message-text" class="sr-only">Your next message</label>
+          <textarea id="message-text" rows="2" maxlength="12000" required aria-describedby="message-help message-draft-status" placeholder="I keep coming back to…"></textarea>
+          <div id="chat-attachments" class="attachment-list" hidden></div>
+          <p id="attachment-route" class="help" hidden></p>
+          <div class="toolbar compact composer-sources"><button id="add-resume" type="button" data-lock>Add a résumé</button><button id="open-sources" type="button" data-lock hidden>Saved sources</button><span class="small muted">Optional — start with your story or a document.</span></div>
+          <div class="composer-actions"><div><p id="message-help" class="help">Enter to send · Shift+Enter for a new line</p><span id="message-draft-status" class="small muted">Only sent messages are saved.</span></div><button id="save-message" class="primary" type="submit" data-lock>Send</button></div>
+        </form>
+      </section>
+
+      <details id="bench-tools" class="bench-tools">
+        <summary>Notebook &amp; bench tools <span id="nav-review-count" class="count" aria-label="Pending proposals">0</span><span class="summary-help">Person Map, possibilities, context &amp; exports</span></summary>
+        <p class="help">Talking does not change your Person Map. When you want to keep something, select its context here, ask for a proposal, and review it.</p>
+        <details class="chat-context-details"><summary>What Pip used for the last chat reply</summary><p class="help">Chat automatically fits up to 12 recent messages, then reviewed map notes, into a bounded input. This is separate from the explicit bench selection below. Omitted history is not summarized.</p><p id="chat-context-summary" class="small">No chat request in this tab yet.</p><div id="chat-context"></div></details>
+        <nav class="section-nav" aria-label="Notebook sections">
+          <a href="#sources">Résumé sources</a><a href="#run">Task &amp; context</a><a href="#review">Review</a><a href="#person-map">Person Map</a><a href="#opportunities">Possibilities</a><a href="#brief">Search Brief</a><a href="#data">Your data</a>
+        </nav>
+        <section id="sources" class="panel" aria-labelledby="sources-title">
+          <div class="section-heading"><h2 id="sources-title" tabindex="-1">Résumé sources</h2><button id="add-resume-source" type="button" data-lock>Add a résumé</button></div>
+          <p class="help">Saved text stays local until you explicitly select excerpts. Document claims are starting points, not verified credentials or a definition of who you are. Past work need not be your future.</p>
+          <p class="help">Choose line ranges below for the next chat message or a bench task. Up to 8 non-overlapping excerpts; smaller selections leave more room for reasoning. Saving a correction creates a new snapshot, preserving older citations.</p>
+          <div id="source-list" class="stack"></div>
+        </section>
+        <section id="run" class="panel" aria-labelledby="run-title">
+          <p class="eyebrow">Choose deliberately</p>
+          <h2 id="run-title">Find notes &amp; explore paths</h2>
+          <label for="task-select">What would help now?</label><select id="task-select" data-lock><option value="conversation">Find notes for my Person Map</option><option value="discover">Discover — explore connected paths</option><option value="brief">Brief — compare paths and plan next steps</option></select>
+          <p id="current-route" class="route-status"></p>
+          <fieldset class="context-fieldset">
+            <legend>Choose the exact bench context</legend>
+            <p id="context-counts" class="selection-count" aria-live="polite"></p>
+            <p class="help">Only checked, saved items enter these structured tasks. Assistant replies are context, never evidence of what you said.</p>
+            <h3>Document excerpts</h3>
+            <div id="document-context"></div>
+            <p class="help">Add excerpts in Résumé sources above. Selecting a message does not automatically select its document attachments.</p>
+            <h3>Conversation</h3>
+            <div class="toolbar compact" aria-label="Message context selection"><button id="messages-recent" type="button" data-lock>Last 6</button><button id="messages-all" type="button" data-lock>Latest 24</button><button id="messages-clear" type="button" data-lock>Clear messages</button></div>
+            <div id="message-context" class="context-list scroll-region" tabindex="0" aria-label="Saved message context checkboxes"></div>
+            <h3>Person Map</h3>
+            <div class="toolbar compact"><button id="statements-all" type="button" data-lock>Select map (up to 100)</button><button id="statements-clear" type="button" data-lock>Clear map context</button></div>
+            <div id="statement-context" class="context-list scroll-region" tabindex="0" aria-label="Person Map context checkboxes"></div>
+            <p class="help">Selection limits: 24 messages, 100 map entries, and 8 document excerpts. Local proposals also have a separate prompt-size limit, including instructions and the output schema; the message count alone does not guarantee a fit. Initial selection: last 6 messages and up to 100 current entries. New map additions are not automatically selected.</p>
+          </fieldset>
+          <p id="generation-help" class="notice" aria-live="polite"></p>
+          <div id="ollama-panel">
+            <p id="input-size" class="notice" role="status" aria-live="polite">Choose saved context to check its size.</p>
+            <div class="toolbar"><button id="generate-button" class="primary" type="button" data-lock aria-describedby="input-size">Generate a proposal</button><button id="recheck-size" type="button" hidden>Check size again</button></div>
+            <p class="help">The size check runs locally without calling a model. If the selection is too large, uncheck longer messages or try a small group using Last 6, or select fewer document lines, then review the selection. Nothing is silently shortened or dropped.</p>
+            <p class="help">Uses the model selected above. Structured generation may take several minutes; nothing is accepted automatically.</p>
+          </div>
+          <div id="manual-panel" hidden>
+            <div class="notice warning"><strong>External handoff is a privacy decision.</strong> Inspect the packet before copying. Pasting it into Zed or ChatGPT may send the selected private context to that tool's configured AI provider, under its terms. Your clipboard may also be synced by your OS. Pip sends nothing to those tools automatically.</div>
+            <button id="prepare-packet" class="primary" type="button" data-lock>Prepare a manual prompt</button>
+          </div>
+          <p id="bench-notice" class="notice" role="status" aria-live="polite" tabindex="-1" hidden></p>
+          <button id="bench-reload-state" type="button" hidden>Reload state to continue</button>
+          <section id="manual-packet" class="manual-packet" aria-labelledby="packet-title" hidden>
+            <h3 id="packet-title">Your frozen manual packet</h3>
+            <p id="packet-summary" class="small"></p>
+            <p class="help">This packet keeps its original revision, task, selected IDs, and document line ranges. Changing the controls above does not change it. It stays in this tab until successfully submitted or explicitly discarded; reloading the page loses it.</p>
+            <p id="packet-stale" class="notice warning" hidden></p>
+            <label for="manual-prompt">Prompt to inspect and copy</label>
+            <textarea id="manual-prompt" class="code-text" rows="10" readonly spellcheck="false"></textarea>
+            <div class="toolbar"><button id="copy-prompt" type="button">Copy prompt</button><button id="discard-packet" type="button" data-lock>Discard packet…</button></div>
+            <form id="manual-reply-form">
+              <label for="manual-reply">Paste the JSON reply for this packet</label>
+              <textarea id="manual-reply" class="code-text" rows="7" maxlength="100000" required spellcheck="false" data-lock aria-describedby="manual-reply-help"></textarea>
+              <p id="manual-reply-help" class="help">The server validates the reply and stages it for review. It does not accept map entries, opportunities, or a brief automatically. A stale packet is rejected, never silently rebuilt.</p>
+              <button id="submit-reply" class="primary" type="submit" data-lock>Validate &amp; stage for review</button>
+            </form>
+          </section>
+        </section>
+
+      <section id="review" class="panel" aria-labelledby="review-title">
+        <p class="eyebrow">03 / You decide</p>
+        <div class="section-heading"><h2 id="review-title" tabindex="-1">Review proposed changes</h2><span id="proposal-count" class="count">0 pending</span></div>
+        <p>Inspect the fields, evidence, and uncertainty, then check only what you want to keep. Nothing is selected by default.</p>
+        <p class="help">Acceptance records your review; an inference remains an inference and a document claim keeps its source. Assistant text may already be saved in the conversation. Accepting or rejecting a proposal does not undo that text. Unchecked items are not saved when you finish a review.</p>
+        <div id="proposal-list" class="stack"></div>
+      </section>
+
+      <section id="person-map" class="panel" aria-labelledby="map-title">
+        <p class="eyebrow">04 / What matters to you</p>
+        <div class="section-heading"><h2 id="map-title" tabindex="-1">Your Person Map</h2><button id="add-statement" class="primary" type="button" data-lock>Add a statement</button></div>
+        <p id="map-summary" class="muted"></p>
+        <p class="help">Source, confidence, and your review are separate. You can accept an inference without declaring it an explicit fact. Manually added entries are marked reviewed by the server.</p>
+        <label for="map-filter">Show domain</label><select id="map-filter"><option value="">All seven domains</option></select>
+        <div id="map-list" class="domain-grid"></div>
+      </section>
+
+      <section id="opportunities" class="panel" aria-labelledby="opportunity-title">
+        <p class="eyebrow">05 / Explore, don't assume</p>
+        <div class="section-heading"><h2 id="opportunity-title" tabindex="-1">Possibilities worth investigating</h2><span id="opportunity-count" class="count">0</span></div>
+        <p class="muted">Explore paths connecting work, place, community, and everyday life: what might fit, what could be difficult, and a small way to learn more. Each remains an unverified hypothesis, not a match score or a recommendation to move.</p>
+        <div id="opportunity-list" class="card-grid"></div>
+      </section>
+
+      <section id="brief" class="panel" aria-labelledby="brief-title">
+        <p class="eyebrow">06 / Take a next step</p>
+        <div class="section-heading"><h2 id="brief-title">Your Search Brief</h2><button id="export-brief" type="button" data-lock>Export plaintext Markdown</button></div>
+        <p class="help">A portable comparison of possible paths and what to investigate next, not verified world data. Brief generation uses only your selected messages, map notes, and document excerpts; saved possibilities are not automatically supplied. Queries are text to take elsewhere, not searches Pip executes.</p>
+        <p class="help">The Markdown export also includes your current Person Map and all saved possibilities as separate reference sections. It contains private information and is not DPAPI-encrypted.</p>
+        <div id="brief-content"></div>
+      </section>
+
+      <section id="data" class="panel" aria-labelledby="data-title">
+        <p class="eyebrow">Always yours</p>
+        <h2 id="data-title">Your data &amp; this test bench</h2>
+                <p id="storage-status" class="muted small">Waiting for the server's storage status.</p>
+        <p>No telemetry or automatic external handoff. The private workspace is held by the local server. This page keeps drafts in memory, not browser local storage; only the startup access token is kept in session storage.</p>
+        <p class="notice warning"><strong>Exports are plaintext.</strong> A JSON export includes the conversation, approved résumé source text and citations, Person Map, pending proposals, opportunities, feedback, and brief. Store it somewhere private. Windows DPAPI protects the stored local payload, not exported files, browser memory, or copied content.</p>
+        <div class="data-grid">
+          <div><h3>Back up or move your workspace</h3><p class="help">Download raw Workspace JSON, without an API state wrapper or access token.</p><button id="export-workspace" type="button" data-lock>Export plaintext JSON</button></div>
+          <div>
+            <h3>Import a workspace</h3>
+            <label for="import-file">Choose a Pip / JobWolf JSON export</label><input id="import-file" type="file" accept=".json,application/json" data-lock>
+            <p class="help">Choosing a file only reads it locally. Import replaces all workspace data; it never merges. Review the selection and confirm before anything is applied.</p>
+            <div id="import-preview" class="notice" hidden><p id="import-summary"></p><div class="toolbar"><button id="apply-import" type="button" data-lock>Replace workspace…</button><button id="cancel-import" type="button" data-lock>Clear selected file</button></div></div>
+          </div>
+          <div class="danger-zone"><h3>Start over</h3><p class="help">Delete the local workspace contents. This cannot remove old exports, clipboard contents, or information already shared with another service.</p><button id="reset-workspace" class="danger" type="button" data-lock>Reset workspace…</button></div>
+        </div>
+      </section>
+      </details>
+    </main>
+    <footer>Built to work for you, not to rank you. Keep what helps. Question the rest.</footer>
+  </div>
+
+  <dialog id="resume-dialog" aria-labelledby="resume-title" aria-describedby="resume-help">
+    <form id="resume-form">
+      <h2 id="resume-title">A starting point, not a box to fit into.</h2>
+      <p id="resume-help" class="help">Choose a résumé or paste its text. Parsing happens locally, with no AI call. Review the text and remove contact details or anything you do not want to keep. Nothing reaches a model just by saving.</p>
+      <p id="resume-error" class="notice error" role="alert" hidden></p>
+      <button id="resume-reload" type="button" hidden>Reload state before retrying</button>
+      <label for="resume-file">Read a file locally (optional)</label>
+      <input id="resume-file" type="file" accept=".pdf,.docx,.txt,.md" data-lock>
+      <p class="help">Text-based PDF (up to 20 pages), DOCX, TXT or Markdown; maximum 2 MiB. No scanned/image PDFs, OCR, password-protected files or legacy DOC. Paste readable text below as a fallback.</p>
+      <p id="resume-warnings" class="notice warning" hidden></p>
+      <label for="resume-name">Source display name</label><input id="resume-name" maxlength="200" required value="Pasted résumé" data-lock>
+      <label for="resume-text">Preview, correct, or paste the text to retain</label>
+      <textarea id="resume-text" rows="13" maxlength="60000" required spellcheck="false" data-lock></textarea>
+      <p class="help">Up to 60,000 characters / 2,000 lines. Only this approved text and its source label are saved, encrypted with the workspace. The original file is not kept or modified. This does not replace your notebook or add Person Map notes.</p>
+      <div class="dialog-actions"><button id="cancel-resume" type="button">Cancel</button><button id="save-resume" type="submit" class="primary" data-lock>Save reviewed text</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="statement-dialog" aria-labelledby="statement-dialog-title" aria-describedby="statement-dialog-help">
+    <form id="statement-form">
+      <h2 id="statement-dialog-title">Add a statement</h2>
+      <p id="statement-dialog-help" class="help">Saving records your review. Source and confidence remain as chosen. Existing evidence and related statement IDs are preserved. Changes may invalidate derived output.</p>
+      <p id="statement-error" class="notice error" role="alert" hidden></p>
+      <label for="statement-text">Statement</label><textarea id="statement-text" rows="4" maxlength="2000" required data-lock></textarea>
+      <div class="form-grid">
+        <div><label for="statement-domain">Domain</label><select id="statement-domain" required data-lock></select></div>
+        <div><label for="statement-dimension">Dimension</label><input id="statement-dimension" maxlength="300" required data-lock></div>
+        <div><label for="statement-facet">Facet</label><input id="statement-facet" maxlength="300" required data-lock></div>
+        <div><label for="statement-importance">Importance</label><select id="statement-importance" data-lock><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+        <div><label for="statement-flexibility">Flexibility</label><select id="statement-flexibility" data-lock><option value="hard_limit">Hard limit</option><option value="strong_preference">Strong preference</option><option value="preference">Preference</option><option value="exploration">Exploration</option></select></div>
+        <div><label for="statement-source">Source</label><select id="statement-source" data-lock><option value="explicit">Explicit — directly stated</option><option value="inferred">Inferred — interpretation</option><option value="document">Document — source claim</option></select></div>
+        <div><label for="statement-confidence">Confidence</label><select id="statement-confidence" data-lock><option value="tentative">Tentative</option><option value="supported">Supported</option></select></div>
+        <div><label for="statement-time-horizon">Time horizon</label><select id="statement-time-horizon" data-lock><option value="current">Current</option><option value="near_term">Near term</option><option value="long_term">Long term</option><option value="unspecified">Unspecified</option></select></div>
+      </div>
+      <label for="statement-condition">Condition <span class="muted">(optional)</span></label><textarea id="statement-condition" rows="2" maxlength="2000" data-lock></textarea>
+      <label for="statement-tension">Tension or contradiction <span class="muted">(optional)</span></label><textarea id="statement-tension" rows="2" maxlength="2000" data-lock></textarea>
+      <div id="statement-provenance"></div>
+      <div class="dialog-actions"><button id="cancel-statement" type="button" data-lock>Cancel</button><button class="primary" type="submit" data-lock>Save statement</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+    <form id="confirm-form">
+      <h2 id="confirm-title">Confirm action</h2><p id="confirm-description" class="preserve-lines"></p>
+      <div id="confirm-word-group" hidden><label id="confirm-word-label" for="confirm-word">Type the confirmation word</label><input id="confirm-word" autocomplete="off" spellcheck="false"></div>
+      <div class="dialog-actions"><button id="confirm-cancel" type="button" autofocus>Cancel</button><button id="confirm-submit" class="danger" type="submit">Confirm</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
