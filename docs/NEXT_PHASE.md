@@ -1,6 +1,6 @@
 # Pip — Next-phase plan
 
-**Status:** Step 1's initial prompt/report/card slice is implemented; résumé intake, research/comparison tools, and speech input remain planned. Individual implementation steps remain incremental.
+**Status — v0.2.0 milestone checkpoint:** The initial connected-path prompt/report/card slice, reviewed résumé intake, and Granite-first local dictation are implemented. The user has confirmed the initial résumé-to-note workflow and satisfactory dictation speed/accuracy in hands-on use. Research/comparison tools remain planned; broader model-quality assessment continues incrementally. See [CHANGELOG.md](../CHANGELOG.md).
 
 ## 1. Outcome
 
@@ -8,7 +8,7 @@ Move from a functioning conversational bench to a useful personal exploration se
 
 > Start with a conversation or an existing résumé, develop a reviewed understanding of the person, and produce a few connected paths through work, place, and everyday life—with practical ways to investigate them.
 
-A résumé is an optional starting record, not a definition of the person or the boundary of their possibilities. Typing must not be the only long-term way to participate: speech input is an important access and usability feature, with model selection and detailed implementation deferred.
+A résumé is an optional starting record, not a definition of the person or the boundary of their possibilities. Typing must not be the only way to participate: optional local speech input now provides an editable draft, with explicit sending and keyboard input preserved.
 
 The first usable milestone combines **richer discoveries and briefs** with **reviewed résumé intake and a source-aware interview**. It does not require a national database, live browsing, a map, a financial engine, or speech recognition to be finished first.
 
@@ -18,7 +18,7 @@ Follow [README.md](../README.md), [Design.md](../Design.md), and [AGENTS.md](../
 
 The current prototype already has streaming Ollama chat, explicit Person Map extraction/review, possibility proposals, feedback, a portable Search Brief, encrypted local persistence, and manual external-model handoff. See [PROTOTYPE.md](PROTOTYPE.md) for actual behavior and limits.
 
-It does **not** yet have document intake, speech recognition, sourced public research records, live browsing, or deterministic affordability comparisons. Its existing JSON workspace import **replaces** a workspace; that is not a résumé importer and must not be repurposed as one.
+It now has optional reviewed document intake and local speech recognition. It does **not** yet have sourced public research records, live browsing, or deterministic affordability comparisons. Its existing JSON workspace import **replaces** a workspace; that is not a résumé importer and must not be repurposed as one.
 
 Preserve these boundaries throughout:
 
@@ -155,11 +155,13 @@ Keep these additions demand-driven:
 
 Avoid double-counting income, low costs, and the affordability result they jointly determine. Keep financial viability, evidence quality, and personal preference distinct. Maps and calculators remain optional notebook tools, not prerequisites for useful discovery or speech input.
 
-## 7. Speech input — Important follow-up, implementation deliberately open
+## 7. Speech input — Granite-first local dictation
 
 **Strengthens:** conversational understanding by reducing typing burden and allowing a more natural account of someone's life.
 
-This is speech-to-text input, not a commitment to a full voice assistant. Do not choose a model, construct the whole pipeline, download weights, or add text-to-speech as part of this planning phase.
+**Current slice:** at the user's direction, start with **Granite Speech 5.0 2B Q8** rather than comparing several backends up front. Optional pinned Windows Vulkan assets, bounded local capture/transcription, cancellation, editable draft insertion, and no automatic submission or map mutation are implemented. The synthetic Windows/Vulkan check and focused Chrome/Firefox capture checks passed. The user's initial real-voice trial was fast and accurate enough to retain Granite as the first backend; assess longer recordings and varied speech through continued use rather than starting a model comparison without a demonstrated problem. See [the prototype speech guide](PROTOTYPE.md#optional-local-dictation-granite).
+
+This is speech-to-text input, not a commitment to a full voice assistant. No text-to-speech or hands-free turn-taking is added. The speech adapter remains separate from conversation reasoning so the backend can change later if evidence warrants it.
 
 ### Intended first experience
 
@@ -167,9 +169,9 @@ A visible microphone action starts recording with permission; the user can stop 
 
 Keep capture/transcription separate from conversation reasoning so a transcription backend can change without rewriting chat. No always-on listening, hidden browser speech service, or automatic cloud fallback. Do not retain raw audio by default; disclose any temporary handling and release recording resources on stop, cancel, or failure.
 
-### Small evaluation before implementation
+### Focused hands-on evaluation
 
-Compare a small shortlist using synthetic material or explicitly consented local recordings, never committed personal audio. Assess:
+Try Granite first with short, then longer local dictation. Compare another model only if speed, accuracy, or usability is inadequate. Use synthetic material or explicitly consented recordings for any shared tests, never committed personal audio. Assess:
 
 - Rambling speech, pauses, corrections, names, dates, numbers, and technical vocabulary.
 - Missing or invented words, including speech hallucinated during silence; ease of correction matters as much as aggregate accuracy.
@@ -186,8 +188,8 @@ Prefer a practical local option if quality and usability permit; a future hosted
 | 0 | Ignore the private archive; publish this general plan | Housekeeping and documentation only |
 | 1 | Richer paths and brief using existing selected context | Initial prompt/presentation slice implemented; assess usefulness with the chosen model |
 | 2 | Typed document sources, reviewed text intake, and lifecycle/migration handling | Implemented; synthetic citation/review/migration/export/deletion checks |
-| 3 | PDF/DOCX adapters and résumé-assisted interview | Implemented in the bench; user evaluation of extraction and interview quality is next |
-| 4 | Small speech-model evaluation | Evidence for a backend choice, not an assumed full pipeline |
+| 3 | PDF/DOCX adapters and résumé-assisted interview | v0.2.0 milestone: initial résumé-to-note workflow confirmed; interview quality remains model-dependent |
+| 4 | Granite-first local dictation | v0.2.0 milestone: initial hands-on dictation accepted for speed/accuracy; continue evaluating through use |
 | 5 | Research records, comparisons, maps/calculators as needed | Each addition solves a demonstrated investigation problem |
 
 Steps 1–3 form the next core phase. Later steps can change order based on actual use; they are not a request to implement everything at once. Provider/model experiments remain separate from feature work.
@@ -198,7 +200,7 @@ Use focused checks proportional to each change:
 - Prompt/report changes: targeted task-contract and rendering checks; user judges conversational usefulness and discovery quality.
 - Source/schema changes: focused evidence, migration, export/import, and deletion checks using synthetic material.
 - Parser changes: a small set of synthetic normal, malformed, oversized, and unsupported documents; confirm failures do not overwrite state or make external requests.
-- Speech work: the agreed small model comparison and focused recording/transcript lifecycle checks.
+- Speech work: focused recording/transcript lifecycle and installer checks, one explicit compatibility smoke when needed, then user assessment of Granite. No automatic multi-model comparison.
 
 Do not run the entire suite, browser sweeps, or live-model calls after every edit. Broaden testing when an actual cross-cutting migration or security boundary warrants it, explain the reason, and never repurpose the private archive as an evaluation dataset without separate informed consent.
 

@@ -180,6 +180,141 @@ class SourceTests(unittest.TestCase):
         self.assertIn("lines 3–3", report)
         self.assertNotIn(OMITTED, report)
 
+    def test_document_id_in_message_evidence_is_reclassified_before_review(self):
+        reply = self.reply.model_copy(deep=True)
+        draft = reply.proposed_statements[0]
+        draft.source = "explicit"
+        draft.document_evidence = []
+        draft.evidence = [Evidence(message_id=self.document.id, quote=self.evidence.quote)]
+        original = reply.model_dump()
+        revision, staged = self.bench.propose(self.revision, self.selection, reply, "synthetic")
+        proposal = staged.proposals[0]
+        corrected = proposal.reply.proposed_statements[0]
+        self.assertEqual(corrected.source, "document")
+        self.assertEqual(corrected.evidence, [])
+        self.assertEqual(corrected.document_evidence, [self.evidence])
+        self.assertEqual(proposal.repaired_document_statement_indices, [0])
+        self.assertEqual(reply.model_dump(), original)
+        self.assertFalse(staged.statements)
+        self.assertTrue(all(message.role == "assistant" for message in staged.messages))
+        _, accepted = self.bench.accept(proposal.id, AcceptRequest(revision=revision, statement_indices=[0]))
+        self.assertEqual(accepted.statements[0].source, "document")
+        self.assertEqual(accepted.statements[0].document_evidence, [self.evidence])
+        self.assertEqual(Workspace.model_validate_json(accepted.model_dump_json()), accepted)
+
+    def test_message_citation_schema_matches_only_selected_user_messages(self):
+        user = Message(role="user", text="I no longer want repair work.")
+        assistant = Message(role="assistant", text="What do you want to change?")
+        unselected = Message(role="user", text="SYNTHETIC_UNSELECTED_MESSAGE")
+        workspace = self.workspace.model_copy(update={"messages": [user, assistant, unselected]})
+        for message_ids in ([], [assistant.id], [assistant.id, user.id]):
+            with self.subTest(message_ids=message_ids):
+                selection = self.selection.model_copy(update={"message_ids": message_ids})
+                context = select_context(workspace, selection)
+                schema = _reply_schema(context)
+                properties = schema["$defs"]["StatementDraft"]["properties"]
+                if user.id in message_ids:
+                    self.assertIn("explicit", properties["source"]["enum"])
+                    self.assertIn("evidence", properties)
+                    self.assertEqual(schema["$defs"]["Evidence"]["properties"]["message_id"]["enum"], [user.id])
+                else:
+                    self.assertNotIn("explicit", properties["source"]["enum"])
+                    self.assertNotIn("evidence", properties)
+                    self.assertNotIn("Evidence", schema["$defs"])
+                    self.assertIn("No user messages are selected", build_prompt(context))
+                self.assertIn("document", properties["source"]["enum"])
+                self.assertIn("inferred", properties["source"]["enum"])
+                self.assertNotIn(unselected.id, build_prompt(context))
+
+    def test_reclassified_citations_preserve_inference_and_do_not_duplicate_evidence(self):
+        reply = self.reply.model_copy(deep=True)
+        draft = reply.proposed_statements[0]
+        draft.source = "inferred"
+        draft.evidence = [Evidence(message_id=self.document.id, quote="Repaired  bicycles at a community workshop.")]
+        _, staged = self.bench.propose(self.revision, self.selection, reply, "synthetic")
+        corrected = staged.proposals[0].reply.proposed_statements[0]
+        self.assertEqual(corrected.source, "inferred")
+        self.assertEqual(corrected.evidence, [])
+        self.assertEqual(corrected.document_evidence, [self.evidence])
+        self.assertEqual(staged.proposals[0].repaired_document_statement_indices, [0])
+
+    def test_reclassification_preserves_real_user_evidence_in_mixed_context(self):
+        revision, workspace = self.bench.add_message(self.revision, "I no longer want repair work.")
+        user = workspace.messages[-1]
+        evidence = Evidence(message_id=user.id, quote=user.text)
+        reply = self.reply.model_copy(deep=True)
+        draft = reply.proposed_statements[0]
+        draft.source = "explicit"
+        draft.document_evidence = []
+        draft.evidence = [Evidence(message_id=self.document.id, quote=self.evidence.quote), evidence]
+        selection = self.selection.model_copy(update={"message_ids": [user.id]})
+        _, staged = self.bench.propose(revision, selection, reply, "synthetic")
+        corrected = staged.proposals[0].reply.proposed_statements[0]
+        self.assertEqual(corrected.source, "explicit")
+        self.assertEqual(corrected.evidence, [evidence])
+        self.assertEqual(corrected.document_evidence, [self.evidence])
+
+    def test_wrong_field_recovery_rejects_unverifiable_evidence_and_hard_limits_atomically(self):
+        revision, workspace = self.bench.add_document(DocumentSaveRequest(
+            revision=self.revision, filename="Unselected synthetic.txt", format="txt", text="Different source.",
+        ))
+        other_id = workspace.documents[-1].id
+        before = self.store.load()
+        for identifier, quote, flexibility, reason in (
+            (Message(role="user", text="Unsaved").id, self.evidence.quote, "preference", "No user messages were selected"),
+            (other_id, "Different source.", "preference", "No user messages were selected"),
+            (self.document.id, "Invented credential", "preference", "not found"),
+            (self.document.id, OMITTED, "preference", "not found"),
+            (self.document.id, "a", "preference", "more than one location"),
+            (self.document.id, self.evidence.quote, "hard_limit", "cannot establish a hard limit"),
+        ):
+            reply = self.reply.model_copy(deep=True)
+            draft = reply.proposed_statements[0]
+            draft.source = "explicit"
+            draft.flexibility = flexibility
+            draft.document_evidence = []
+            draft.evidence = [Evidence(message_id=identifier, quote=quote)]
+            with self.subTest(reason=reason), self.assertRaisesRegex(UserError, reason) as error:
+                self.bench.propose(revision, self.selection, reply, "synthetic")
+            if flexibility != "hard_limit":
+                self.assertIn("Map note 1, message citation 1", str(error.exception))
+            self.assertNotIn(self.document.filename, str(error.exception))
+            self.assertNotIn(OMITTED, str(error.exception))
+            self.assertEqual(self.store.load(), before)
+
+    def test_reclassification_never_overrides_selected_message_identity(self):
+        for role, text in (("user", self.evidence.quote), ("user", "Other user text"), ("assistant", self.evidence.quote)):
+            with self.subTest(role=role, text=text):
+                bench = Bench(MemoryStore())
+                message = Message(id=self.document.id, role=role, text=text)
+                workspace = self.workspace.model_copy(update={"messages": [message]})
+                revision, _ = bench.replace(0, workspace)
+                selection = self.selection.model_copy(update={"message_ids": [message.id]})
+                reply = self.reply.model_copy(deep=True)
+                draft = reply.proposed_statements[0]
+                draft.source = "explicit"
+                draft.document_evidence = []
+                draft.evidence = [Evidence(message_id=message.id, quote=self.evidence.quote)]
+                if role == "user" and text == self.evidence.quote:
+                    _, staged = bench.propose(revision, selection, reply, "synthetic")
+                    self.assertEqual(staged.proposals[0].reply, reply)
+                    self.assertEqual(staged.proposals[0].repaired_document_statement_indices, [])
+                else:
+                    before = bench.store.load()
+                    with self.assertRaisesRegex(UserError, "Map note 1, message citation 1"):
+                        bench.propose(revision, selection, reply, "synthetic")
+                    self.assertEqual(bench.store.load(), before)
+
+    def test_reclassification_respects_document_citation_limit(self):
+        reply = self.reply.model_copy(deep=True)
+        draft = reply.proposed_statements[0]
+        draft.document_evidence = [self.evidence.model_copy(update={"quote": self.evidence.quote[:i]}) for i in range(1, 9)]
+        draft.evidence = [Evidence(message_id=self.document.id, quote="Built a tool rack.")]
+        before = self.store.load()
+        with self.assertRaisesRegex(UserError, "limit of eight document citations"):
+            self.bench.propose(self.revision, self.selection, reply, "synthetic")
+        self.assertEqual(self.store.load(), before)
+
     def test_invalid_document_evidence_and_source_labels_are_atomic(self):
         cases = [
             self.reply.proposed_statements[0].model_copy(update={"source": "explicit"}),
@@ -193,6 +328,138 @@ class SourceTests(unittest.TestCase):
             with self.subTest(source=draft.source, evidence=draft.document_evidence), self.assertRaises(UserError):
                 self.bench.propose(self.revision, self.selection, ModelReply(assistant_text="Draft", proposed_statements=[draft]), "synthetic")
             self.assertEqual(self.store.load(), before)
+
+    def test_prompt_numbers_selected_lines_without_duplicating_or_expanding_source_text(self):
+        context = select_context(self.workspace, self.selection)
+        prompt = build_prompt(context)
+        selected = json.loads(prompt.split("BEGIN_JOBWOLF_CONTEXT_JSON\n", 1)[1].split("\n", 1)[0])
+        document = selected["documents"][0]
+        self.assertNotIn("text", document)
+        self.assertEqual(document["lines"], [
+            {"line": 2, "text": ""},
+            {"line": 3, "text": "Repaired bicycles at a community workshop."},
+            {"line": 4, "text": "Built a tool rack."},
+        ])
+        self.assertNotIn(OMITTED, prompt)
+        self.assertNotIn("Unselected final line", prompt)
+        self.assertEqual(structured_input_size(context).input_bytes, len(prompt.encode()))
+
+    def test_unique_quote_repair_is_flagged_reviewable_and_preserves_provenance(self):
+        reply = self.reply.model_copy(deep=True)
+        reply.proposed_statements[0].document_evidence[0].start_line = 4
+        reply.proposed_statements[0].document_evidence[0].end_line = 4
+        before = reply.model_dump()
+        with self.assertRaises(UserError):
+            validate_reply(reply, select_context(self.workspace, self.selection))
+        revision, staged = self.bench.propose(self.revision, self.selection, reply, "synthetic")
+        proposal = staged.proposals[0]
+        self.assertEqual(proposal.repaired_document_statement_indices, [0])
+        self.assertEqual(proposal.reply.proposed_statements[0].document_evidence, [self.evidence])
+        self.assertEqual(reply.model_dump(), before)
+        self.assertEqual(staged.documents[0], self.document)
+        self.assertFalse(staged.statements)
+        restored = Workspace.model_validate_json(staged.model_dump_json())
+        revision, restored = self.bench.replace(revision, restored)
+        self.assertEqual(restored.proposals[0].repaired_document_statement_indices, [0])
+        _, accepted = self.bench.accept(proposal.id, AcceptRequest(revision=revision, statement_indices=[0]))
+        self.assertEqual(accepted.statements[0].source, "document")
+        self.assertEqual(accepted.statements[0].document_evidence, [self.evidence])
+
+    def test_whitespace_repair_restores_original_quote_and_multiline_locator(self):
+        revision, workspace = self.bench.add_document(DocumentSaveRequest(
+            revision=self.revision, filename="Synthetic wrapping.txt", format="txt",
+            text="Heading\n  Maintained\tand  repaired\nproduction equipment.\nEnd",
+        ))
+        document = workspace.documents[-1]
+        selection = ContextSelection(document_ranges=[DocumentSelection(document_id=document.id, start_line=2, end_line=3)])
+        reply = self.reply.model_copy(deep=True)
+        reply.proposed_statements[0].document_evidence = [DocumentEvidence(
+            document_id=document.id, start_line=2, end_line=2,
+            quote="Maintained and repaired production equipment.",
+        )]
+        _, staged = self.bench.propose(revision, selection, reply, "synthetic")
+        proposal = staged.proposals[0]
+        actual = proposal.reply.proposed_statements[0].document_evidence[0]
+        self.assertEqual((actual.start_line, actual.end_line), (2, 3))
+        self.assertEqual(actual.quote, "Maintained\tand  repaired\nproduction equipment.")
+        self.assertEqual(proposal.repaired_document_statement_indices, [0])
+        validate_reply(proposal.reply, select_context(staged, selection))
+
+    def test_valid_citations_are_not_rewritten_or_flagged(self):
+        _, staged = self.bench.propose(self.revision, self.selection, self.reply, "synthetic")
+        self.assertEqual(staged.proposals[0].reply, self.reply)
+        self.assertEqual(staged.proposals[0].repaired_document_statement_indices, [])
+
+    def test_repair_never_uses_another_document_or_an_unselected_passage(self):
+        revision, workspace = self.bench.add_document(DocumentSaveRequest(
+            revision=self.revision, filename="Another synthetic.txt", format="txt", text="Only in another source.",
+        ))
+        other = workspace.documents[-1]
+        selection = ContextSelection(document_ranges=[self.range, DocumentSelection(document_id=other.id, start_line=1, end_line=1)])
+        before = self.store.load()
+        for quote in (OMITTED, "Only in another source."):
+            reply = self.reply.model_copy(deep=True)
+            reply.proposed_statements[0].document_evidence[0].quote = quote
+            with self.subTest(quote=quote), self.assertRaisesRegex(UserError, "not found"):
+                self.bench.propose(revision, selection, reply, "synthetic")
+            self.assertEqual(self.store.load(), before)
+        reply = self.reply.model_copy(deep=True)
+        reply.proposed_statements[0].document_evidence = [DocumentEvidence(document_id=other.id, start_line=1, end_line=1, quote=other.text)]
+        with self.assertRaisesRegex(UserError, "document was not selected"):
+            self.bench.propose(revision, self.selection, reply, "synthetic")
+        self.assertEqual(self.store.load(), before)
+
+    def test_ambiguous_exact_whitespace_and_overlapping_matches_are_not_guessed(self):
+        for text, quote in (
+            ("Heading\nRepeated quote\nRepeated quote", "Repeated quote"),
+            ("Heading\nRepeated\tquote\nRepeated  quote", "Repeated quote"),
+            ("Heading\nbanana\nEnd", "ana"),
+        ):
+            with self.subTest(quote=quote):
+                store = MemoryStore()
+                bench = Bench(store)
+                revision, workspace = bench.add_document(DocumentSaveRequest(revision=0, filename="Synthetic.txt", format="txt", text=text))
+                document = workspace.documents[0]
+                selection = ContextSelection(document_ranges=[DocumentSelection(document_id=document.id, start_line=1, end_line=3)])
+                reply = self.reply.model_copy(deep=True)
+                reply.proposed_statements[0].document_evidence = [DocumentEvidence(document_id=document.id, start_line=1, end_line=1, quote=quote)]
+                before = store.load()
+                with self.assertRaisesRegex(UserError, "more than one location"):
+                    bench.propose(revision, selection, reply, "synthetic")
+                self.assertEqual(store.load(), before)
+
+    def test_paraphrased_or_changed_quotes_fail_atomically_with_safe_note_positions(self):
+        before = self.store.load()
+        for quote in (
+            "Fixed bicycles at a community workshop.",
+            "Repaired bicycles at a community workshop!",
+            "repaired bicycles at a community workshop.",
+            "Repaired no bicycles at a community workshop.",
+        ):
+            reply = self.reply.model_copy(deep=True)
+            bad = reply.proposed_statements[0].model_copy(deep=True)
+            bad.document_evidence[0].quote = quote
+            reply.proposed_statements.append(bad)
+            with self.subTest(quote=quote), self.assertRaises(UserError) as error:
+                self.bench.propose(self.revision, self.selection, reply, "synthetic")
+            self.assertIn("Map note 2, document citation 1", str(error.exception))
+            self.assertIn("Nothing was changed", str(error.exception))
+            self.assertNotIn(quote, str(error.exception))
+            self.assertNotIn(self.document.filename, str(error.exception))
+            self.assertEqual(self.store.load(), before)
+
+    def test_repair_metadata_is_application_owned_and_old_proposals_still_load(self):
+        _, staged = self.bench.propose(self.revision, self.selection, self.reply, "synthetic")
+        old = staged.model_dump()
+        del old["proposals"][0]["repaired_document_statement_indices"]
+        self.assertEqual(Workspace.model_validate(old), staged)
+        for indices in ([1], [0, 0], [-1]):
+            data = staged.model_dump()
+            data["proposals"][0]["repaired_document_statement_indices"] = indices
+            with self.subTest(indices=indices), self.assertRaises(ValidationError):
+                Workspace.model_validate(data)
+        with self.assertRaises(ValidationError):
+            ModelReply.model_validate({**self.reply.model_dump(), "repaired_document_statement_indices": [0]})
 
     def test_new_explicit_correction_does_not_rewrite_document_snapshot(self):
         revision, workspace = self.bench.add_message(self.revision, "That résumé is outdated; I no longer want repair work.")
@@ -356,10 +623,12 @@ class DocumentHTTPTests(unittest.TestCase):
         self.assertEqual(packet.status_code, 200, packet.text)
         self.assertEqual(packet.json()["selection"], selection)
         self.assertNotIn(OMITTED, packet.text)
-        reply = {"assistant_text": "A tentative starting point", "proposed_statements": [{"text": "Résumé describes repair experience", "domain": "background", "source": "document", "document_evidence": [{**selection["document_ranges"][0], "quote": "Repaired bicycles at a community workshop."}]}]}
+        reply = {"assistant_text": "A tentative starting point", "proposed_statements": [{"text": "Résumé describes repair experience", "domain": "background", "source": "document", "document_evidence": [{**selection["document_ranges"][0], "start_line": 2, "end_line": 2, "quote": "Repaired bicycles at a community workshop."}]}]}
         staged = self.client.post("/api/proposals/manual", json={"revision": 1, "selection": selection, "reply_text": json.dumps(reply)})
         self.assertEqual(staged.status_code, 200, staged.text)
         proposal = staged.json()["workspace"]["proposals"][0]
+        self.assertEqual(proposal["repaired_document_statement_indices"], [0])
+        self.assertEqual(proposal["reply"]["proposed_statements"][0]["document_evidence"][0]["start_line"], 3)
         accepted = self.client.post(f"/api/proposals/{proposal['id']}/accept", json={"revision": 2, "statement_indices": [0]})
         self.assertEqual(accepted.status_code, 200, accepted.text)
         exported = self.client.get("/api/export").json()
@@ -372,6 +641,32 @@ class DocumentHTTPTests(unittest.TestCase):
         self.assertFalse(removed.json()["workspace"]["documents"])
         self.assertFalse(removed.json()["workspace"]["statements"])
         self.assertEqual(self.provider.contexts, [])
+
+    def test_resume_only_generate_recovers_document_quote_in_message_field(self):
+        saved = self.client.post("/api/documents", json={"revision": 0, "filename": "Synthetic.txt", "format": "txt", "text": TEXT})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        identifier = saved.json()["workspace"]["documents"][0]["id"]
+        selection = {"document_ranges": [{"document_id": identifier, "start_line": 3, "end_line": 3}]}
+        reply = ModelReply(assistant_text="A starting point for review", proposed_statements=[StatementDraft(
+            text="The résumé describes repair experience", domain="background", source="explicit",
+            evidence=[Evidence(message_id=identifier, quote="Repaired bicycles at a community workshop.")],
+        )])
+        with patch.object(self.provider, "generate", return_value=reply) as generate:
+            response = self.client.post("/api/generate", json={"revision": 1, "selection": selection, "model": "Lyra:latest"})
+        self.assertEqual(response.status_code, 200, response.text)
+        generate.assert_called_once()
+        context = generate.call_args.args[1]
+        self.assertEqual(context.messages, [])
+        self.assertNotIn(OMITTED, context.model_dump_json())
+        workspace = response.json()["workspace"]
+        self.assertEqual(workspace["statements"], [])
+        self.assertTrue(all(message["role"] == "assistant" for message in workspace["messages"]))
+        proposal = workspace["proposals"][0]
+        self.assertEqual(proposal["repaired_document_statement_indices"], [0])
+        draft = proposal["reply"]["proposed_statements"][0]
+        self.assertEqual(draft["source"], "document")
+        self.assertEqual(draft["evidence"], [])
+        self.assertEqual(draft["document_evidence"], [{**selection["document_ranges"][0], "quote": "Repaired bicycles at a community workshop."}])
 
     def test_http_chat_sends_only_attached_excerpt_and_never_adds_map_notes(self):
         saved = self.client.post("/api/documents", json={"revision": 0, "filename": "Synthetic.txt", "format": "txt", "text": TEXT}).json()

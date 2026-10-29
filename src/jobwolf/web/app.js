@@ -34,6 +34,13 @@
   let followChat = true;
   let composing = false;
   let draftVersion = 0;
+  const SPEECH_RATE = 16000;
+  const SPEECH_SECONDS = 120;
+  const DRAFT_LIMIT = 12000;
+  let speechSession = null;
+  let speechCheck = null;
+  let speechStatus = null;
+  let speechNotice = "";
   let inputCheck = { key: "", status: "idle", result: null, error: null };
   let inputCheckTimer = null;
   const proposalChoices = new Map();
@@ -128,11 +135,15 @@
     }
   }
 
-  async function api(path, { method = "GET", body, download = false, onEvent = null, timeout = 30000 } = {}) {
+  async function api(path, { method = "GET", body, download = false, onEvent = null, timeout = 30000, signal = null } = {}) {
     if (!token) throw new ActionError("Open the complete startup link printed by the running Pip test bench. This page needs that link's session access token.");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
-    const mutation = method !== "GET" && !["/api/context", "/api/context/size", "/api/documents/preview"].includes(path);
+    const abort = () => { clearTimeout(timer); controller.abort(); };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const speechRequest = path === "/api/speech/status" || path === "/api/speech/transcribe";
+    const mutation = method !== "GET" && !speechRequest && !["/api/context", "/api/context/size", "/api/documents/preview"].includes(path);
     try {
       const headers = { "X-JobWolf-Token": token, Accept: onEvent ? "application/x-ndjson" : download ? "*/*" : "application/json" };
       if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -165,6 +176,9 @@
       return download ? await response.blob() : await response.json();
     } catch (error) {
       if (error instanceof ActionError) throw error;
+      if (speechRequest) throw new ActionError(controller.signal.aborted
+        ? "Speech request timed out. Your draft and workspace are unchanged. The local process may still finish; its result will be discarded."
+        : "Could not complete the local speech request. Your draft and workspace are unchanged. Check that Pip is running, then check speech setup again.");
       throw new ActionError(
         controller.signal.aborted
           ? "The request timed out. The server may still finish it. Reload state before retrying, especially after an inference."
@@ -173,6 +187,351 @@
       );
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  function speechClock(seconds) {
+    const whole = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  }
+
+  function renderSpeechControls() {
+    const active = Boolean(speechSession);
+    const checking = Boolean(speechCheck);
+    const held = !$("speech-overflow").hidden;
+    $("speech-start").disabled = busy || active || checking || held || !state || !token || authFailed || syncRequired;
+    $("speech-start").setAttribute("aria-expanded", String(!$("speech-panel").hidden));
+    $("speech-stop").hidden = speechSession?.phase !== "recording";
+    $("speech-stop").disabled = false;
+    $("speech-cancel").hidden = !active && !checking;
+    $("speech-cancel").disabled = false;
+    $("speech-recheck").hidden = active || checking;
+    $("speech-recheck").disabled = !token || authFailed;
+    $("speech-dismiss").hidden = active || checking;
+    $("speech-dismiss").textContent = held ? "Discard transcript" : "Dismiss";
+    $("speech-append").disabled = busy || active || composing || !$("speech-transcript").value.trim();
+    $("speech-status").textContent = speechNotice;
+    $("speech-route").textContent = `${speechStatus?.model || "Granite Speech 5.0 2B · Q8"} · local only · ${speechClock(speechStatus?.max_seconds || SPEECH_SECONDS)} limit. Only audio is sent for transcription, never selected context. Review before sending; nothing is saved automatically.`;
+    $("speech-timer").hidden = !active || speechSession.phase === "starting";
+  }
+
+  function speechSupportError() {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return "Microphone input needs a supported browser on the local startup address (a secure context). You can still type.";
+    if (!window.AudioContext || !window.AudioWorkletNode || !("audioWorklet" in window.AudioContext.prototype)) return "This browser does not support the local audio recorder. Try a current browser, or keep typing.";
+    return "";
+  }
+
+  function speechErrorText(error) {
+    // Speech never mutates the workspace: even an inference-lock 409 is not a sync conflict.
+    if (error instanceof ActionError) {
+      if (error.status === 401 || error.status === 403) showError(error);
+      return error.message;
+    }
+    if (["NotAllowedError", "SecurityError"].includes(error?.name)) return "Microphone access was not allowed. Check this site's microphone permission and the local server's microphone policy, then try again. Your draft is unchanged.";
+    if (["NotFoundError", "NotReadableError"].includes(error?.name)) return "No usable microphone was found. Check that it is connected and not in use by another app. Your draft is unchanged.";
+    return "Could not record or transcribe locally. Check your microphone and speech setup, then try again. Your draft and workspace are unchanged.";
+  }
+
+  async function checkSpeechStatus() {
+    if (speechSession || speechCheck || !token || authFailed) return;
+    $("speech-panel").hidden = false;
+    const unsupported = speechSupportError();
+    if (unsupported) { speechNotice = unsupported; updateControls(); return; }
+    const check = new AbortController();
+    speechCheck = check;
+    speechStatus = null;
+    speechNotice = "Checking local speech setup… This does not load or download a model.";
+    updateControls();
+    try {
+      const result = await api("/api/speech/status", { signal: check.signal, timeout: 10000 });
+      if (speechCheck !== check) return;
+      if (typeof result?.available !== "boolean" || typeof result.model !== "string" || typeof result.detail !== "string"
+        || result.sample_rate !== SPEECH_RATE || !Number.isInteger(result.max_seconds) || result.max_seconds <= 0) {
+        throw new ActionError("The local speech setup returned an unsupported recording format.");
+      }
+      speechStatus = { ...result, max_seconds: Math.min(SPEECH_SECONDS, result.max_seconds) };
+      speechNotice = result.available
+        ? "Ready. Press Dictate to allow microphone access and start recording. You can keep typing."
+        : `${result.detail} Run setup-speech.cmd, then choose Check again. Nothing is downloaded by this page.`;
+    } catch (error) {
+      if (speechCheck !== check) return;
+      speechNotice = `${speechErrorText(error)} Speech setup is unavailable. Run setup-speech.cmd if needed, then choose Check again.`;
+    } finally {
+      if (speechCheck === check) { speechCheck = null; updateControls(); }
+    }
+  }
+
+  function stopSpeechTracks(session) {
+    if (!session.stream) return;
+    for (const track of session.stream.getTracks()) { track.onended = null; track.stop(); }
+    session.stream = null;
+  }
+
+  function releaseSpeechRecorder(session) {
+    clearTimeout(session.startTimer);
+    clearTimeout(session.limitTimer);
+    clearTimeout(session.flushTimer);
+    clearInterval(session.tickTimer);
+    stopSpeechTracks(session);
+    if (session.source) { try { session.source.disconnect(); } catch { /* Already disconnected. */ } }
+    if (session.recorder) {
+      session.recorder.onprocessorerror = null;
+      session.recorder.port.onmessage = null;
+      session.recorder.port.close();
+      try { session.recorder.disconnect(); } catch { /* Already disconnected. */ }
+    }
+    if (session.context) {
+      session.context.onstatechange = null;
+      if (session.context.state !== "closed") void session.context.close().catch(() => {});
+    }
+    session.source = session.recorder = session.context = null;
+  }
+
+  function discardSpeech({ hide = false, render = true } = {}) {
+    const session = speechSession;
+    const check = speechCheck;
+    // Invalidate before abort/close: permissions, worklet loading and HTTP can all finish late.
+    speechSession = speechCheck = null;
+    check?.abort();
+    if (session) {
+      session.controller.abort();
+      releaseSpeechRecorder(session);
+      session.chunks = [];
+    }
+    $("speech-transcript").value = "";
+    $("speech-overflow").hidden = true;
+    $("speech-panel").hidden = hide;
+    speechNotice = session?.phase === "transcribing"
+      ? "Dictation canceled. Your draft is unchanged. The bounded local process may still finish, but its result will be discarded."
+      : "Dictation dismissed. Your draft is unchanged.";
+    if (render) updateControls();
+  }
+
+  function failSpeech(session, error) {
+    if (speechSession !== session) return;
+    discardSpeech({ render: false });
+    speechNotice = speechErrorText(error);
+    updateControls();
+  }
+
+  async function startSpeech() {
+    if (busy || speechSession || speechCheck || !state || !token || authFailed || syncRequired || !$("speech-overflow").hidden || document.querySelector("dialog[open]")) return;
+    $("speech-panel").hidden = false;
+    if (!speechStatus?.available) { await checkSpeechStatus(); return; }
+    const unsupported = speechSupportError();
+    if (unsupported) { speechNotice = unsupported; updateControls(); return; }
+    const session = {
+      phase: "starting", controller: new AbortController(), chunks: [], frames: 0, hasAudio: false,
+      maxSeconds: speechStatus.max_seconds,
+    };
+    speechSession = session;
+    speechNotice = "Allow microphone access to start dictating. Cancel stops this attempt; typing stays available.";
+    updateControls();
+    try {
+      // Firefox cannot connect microphone capture to a non-native-rate context.
+      // Capture at the browser's rate; resample offline only after releasing the mic.
+      const context = new window.AudioContext();
+      session.context = context;
+      if (!Number.isInteger(context.sampleRate) || context.sampleRate < 8000 || context.sampleRate > 96000) throw new ActionError("This microphone setup uses an unsupported audio rate. Choose a device configured between 8 and 96 kHz, or keep typing. Your draft is unchanged.");
+      if (context.sampleRate !== SPEECH_RATE && !window.OfflineAudioContext) throw new ActionError("This browser cannot convert microphone audio locally. Try a current browser or keep typing. Your draft is unchanged.");
+      session.sampleRate = context.sampleRate;
+      session.maxFrames = session.maxSeconds * session.sampleRate;
+      session.startTimer = setTimeout(() => failSpeech(session, new ActionError("The microphone did not become ready. Check permission and try Dictate again. Your draft is unchanged.")), 30000);
+      await Promise.all([
+        context.resume(),
+        context.audioWorklet.addModule("/assets/speech-recorder.js").catch(() => {
+          throw new ActionError("The browser could not load Pip's local audio recorder. Refresh the page. If a site blocker reports blocking /assets/speech-recorder.js, allow that local file for Pip only. Your draft is unchanged.");
+        }),
+        navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false }).then((stream) => {
+          if (speechSession !== session) { for (const track of stream.getTracks()) track.stop(); return; }
+          session.stream = stream;
+          for (const track of stream.getTracks()) track.onended = () => failSpeech(session, new ActionError("The microphone disconnected. Recording was discarded; your draft is unchanged."));
+        }),
+      ]);
+      if (speechSession !== session) return;
+      if (context.state !== "running") throw new ActionError("The browser could not start audio capture. Try Dictate again or keep typing.");
+      clearTimeout(session.startTimer);
+      session.source = context.createMediaStreamSource(session.stream);
+      session.recorder = new window.AudioWorkletNode(context, "pip-speech-recorder", {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+        channelCount: 1, channelCountMode: "explicit", channelInterpretation: "speakers",
+        processorOptions: { maxFrames: session.maxFrames },
+      });
+      session.recorder.onprocessorerror = () => failSpeech(session, new ActionError("The local audio recorder failed. Recording was discarded; your draft is unchanged."));
+      session.recorder.port.onmessage = ({ data }) => receiveSpeechChunk(session, data);
+      context.onstatechange = () => {
+        if (speechSession === session && session.phase === "recording" && context.state !== "running") failSpeech(session, new ActionError("Audio capture was interrupted by the browser. Recording was discarded; your draft is unchanged."));
+      };
+      session.phase = "recording";
+      session.startedAt = performance.now();
+      session.source.connect(session.recorder);
+      // The worklet outputs silence; connecting it keeps capture running without microphone playback.
+      session.recorder.connect(context.destination);
+      const tick = () => {
+        const seconds = Math.min(session.maxSeconds, (performance.now() - session.startedAt) / 1000);
+        $("speech-timer").textContent = `${speechClock(seconds)} / ${speechClock(session.maxSeconds)}`;
+      };
+      tick();
+      session.tickTimer = setInterval(tick, 250);
+      session.limitTimer = setTimeout(stopSpeech, session.maxSeconds * 1000);
+      speechNotice = "Recording. Stop & transcribe when ready; the time limit stops and transcribes automatically. Cancel discards audio. Sending and notebook actions wait; you can keep typing.";
+      updateControls();
+    } catch (error) {
+      failSpeech(session, error);
+    }
+  }
+
+  function receiveSpeechChunk(session, data) {
+    if (speechSession !== session || !["recording", "stopping"].includes(session.phase)) return;
+    if (data?.type === "chunk" && data.pcm instanceof Int16Array && data.pcm.length > 0 && data.pcm.length <= 4096 && session.frames + data.pcm.length <= session.maxFrames) {
+      session.chunks.push(data.pcm);
+      session.frames += data.pcm.length;
+      if (!session.hasAudio) session.hasAudio = data.pcm.some((sample) => Math.abs(sample) > 32);
+    } else if (data?.type === "done" && data.frames === session.frames) {
+      void transcribeSpeech(session);
+    } else {
+      failSpeech(session, new ActionError("The audio recorder returned invalid or oversized audio. Recording was discarded; your draft is unchanged."));
+    }
+  }
+
+  function stopSpeech() {
+    const session = speechSession;
+    if (session?.phase !== "recording") return;
+    session.phase = "stopping";
+    clearTimeout(session.limitTimer);
+    clearInterval(session.tickTimer);
+    try {
+      stopSpeechTracks(session);
+      session.source.disconnect();
+      speechNotice = "Finishing the recording… Cancel is still available.";
+      updateControls();
+      // Wait for the final partial chunk before closing the worklet/context.
+      session.flushTimer = setTimeout(() => failSpeech(session, new ActionError("The audio recorder did not finish. Audio was discarded; your draft is unchanged.")), 3000);
+      session.recorder.port.postMessage({ type: "stop" });
+    } catch (error) { failSpeech(session, error); }
+  }
+
+  async function resampleSpeech(chunks, frames, inputRate) {
+    const outputFrames = Math.max(1, Math.round(frames * SPEECH_RATE / inputRate));
+    const offline = new window.OfflineAudioContext(1, outputFrames, SPEECH_RATE);
+    const input = offline.createBuffer(1, frames, inputRate);
+    const channel = input.getChannelData(0);
+    let offset = 0;
+    for (const chunk of chunks) for (const sample of chunk) channel[offset++] = sample / 32768;
+    const source = offline.createBufferSource();
+    source.buffer = input;
+    source.connect(offline.destination);
+    try {
+      source.start();
+      const rendered = await offline.startRendering();
+      const samples = rendered.getChannelData(0);
+      const pcm = new Int16Array(samples.length);
+      for (let i = 0; i < samples.length; i++) {
+        const value = Math.max(-1, Math.min(1, samples[i]));
+        pcm[i] = Math.round(value * (value < 0 ? 32768 : 32767));
+      }
+      return pcm;
+    } finally {
+      source.disconnect();
+      source.buffer = null;
+    }
+  }
+
+  function speechWavBase64(chunks, frames) {
+    const bytes = new Uint8Array(44 + frames * 2);
+    const view = new DataView(bytes.buffer);
+    const label = (offset, text) => { for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i); };
+    label(0, "RIFF"); view.setUint32(4, bytes.length - 8, true); label(8, "WAVE");
+    label(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, SPEECH_RATE, true);
+    view.setUint32(28, SPEECH_RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    label(36, "data"); view.setUint32(40, frames * 2, true);
+    let offset = 44;
+    for (const chunk of chunks) for (const sample of chunk) { view.setInt16(offset, sample, true); offset += 2; }
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return btoa(binary);
+  }
+
+  function appendSpeechText(text) {
+    const draft = $("message-text");
+    const separator = draft.value && !/\s$/.test(draft.value) ? "\n" : "";
+    if (composing || draft.value.length + separator.length + text.length > DRAFT_LIMIT) return false;
+    const scroll = draft.scrollTop;
+    // Append to the current draft, not the snapshot from when recording started.
+    draft.setRangeText(separator + text, draft.value.length, draft.value.length, "preserve");
+    draft.scrollTop = scroll;
+    draftVersion += 1;
+    return true;
+  }
+
+  function appendHeldTranscript() {
+    if (busy || speechSession || composing) return;
+    const text = $("speech-transcript").value;
+    if (!text.trim()) return;
+    if (appendSpeechText(text)) {
+      $("speech-transcript").value = "";
+      $("speech-overflow").hidden = true;
+      speechNotice = "Transcript added to your draft. Review and edit it before sending. Nothing was saved or sent as chat.";
+    } else {
+      speechNotice = "The combined draft would exceed 12,000 characters. Nothing was cut or replaced. Edit or copy the separate transcript below.";
+    }
+    updateControls();
+  }
+
+  async function transcribeSpeech(session) {
+    session.phase = "transcribing";
+    try {
+      $("speech-timer").textContent = `${speechClock(session.frames / session.sampleRate)} / ${speechClock(session.maxSeconds)}`;
+      releaseSpeechRecorder(session);
+      if (!session.frames || !session.hasAudio) {
+        session.chunks = [];
+        speechSession = null;
+        speechNotice = "No audible audio was captured. Check your microphone and try again. Your draft is unchanged.";
+        updateControls();
+        return;
+      }
+      let chunks = session.chunks;
+      let frames = session.frames;
+      session.chunks = [];
+      if (session.sampleRate !== SPEECH_RATE) {
+        speechNotice = "Preparing your recording locally… The microphone is off; you can keep typing or cancel.";
+        updateControls();
+        const pcm = await resampleSpeech(chunks, frames, session.sampleRate).catch(() => {
+          throw new ActionError("The browser could not convert the recording to Granite's audio format. Audio was not sent; your draft is unchanged. Try a shorter recording or another browser.");
+        });
+        if (speechSession !== session) return;
+        chunks = [pcm];
+        frames = pcm.length;
+      }
+      speechNotice = "Transcribing locally with Granite… You can keep typing. Cancel discards the result; the bounded local process may still finish.";
+      updateControls();
+      const audioBase64 = speechWavBase64(chunks, frames);
+      const result = await api("/api/speech/transcribe", {
+        method: "POST", body: { audio_base64: audioBase64 }, signal: session.controller.signal, timeout: 240000,
+      });
+      if (speechSession !== session) return;
+      if (typeof result?.text !== "string" || !Number.isFinite(result.audio_seconds) || result.audio_seconds < 0
+        || !Number.isFinite(result.elapsed_seconds) || result.elapsed_seconds < 0 || typeof result.model !== "string") {
+        throw new ActionError("The local speech response was invalid. Your draft and workspace are unchanged.");
+      }
+      const text = result.text.trim();
+      speechSession = null;
+      if (!text) {
+        speechNotice = "No speech was detected. Try again closer to the microphone. Your draft is unchanged.";
+      } else if (appendSpeechText(text)) {
+        speechNotice = "Transcript added to your current draft. Review and edit it before sending. Nothing was saved or sent as chat.";
+      } else {
+        $("speech-transcript").value = text;
+        $("speech-overflow").hidden = false;
+        speechNotice = composing
+          ? "Transcript kept separately while you finish composing text. Add it when ready; your draft is unchanged."
+          : "The combined draft would exceed 12,000 characters. The full transcript is kept separately below; nothing was cut or replaced.";
+      }
+      updateControls();
+    } catch (error) {
+      failSpeech(session, error);
     }
   }
 
@@ -260,7 +619,7 @@
   }
 
   async function runAction(label, action, { bench = false } = {}) {
-    if (busy) return;
+    if (busy || speechSession) return;
     busy = true;
     try {
       clearErrors();
@@ -301,21 +660,21 @@
 
   function scheduleInputCheck() {
     const request = state && $("provider-select").value === "ollama" && !generationBlock()
-      ? { revision: state.revision, selection: currentSelection() } : null;
+      ? { revision: state.revision, selection: currentSelection(), context_tokens: Number($("context-tokens").value) } : null;
     const key = request ? JSON.stringify(request) : "";
     if (key !== inputCheck.key) {
       clearTimeout(inputCheckTimer);
       inputCheck = { key, status: "idle", result: null, error: null };
     }
-    if (!request || busy || syncRequired || authFailed || !$("bench-tools").open || inputCheck.status !== "idle") return;
+    if (!request || busy || speechSession || syncRequired || authFailed || !$("bench-tools").open || inputCheck.status !== "idle") return;
     const check = inputCheck;
     check.status = "pending";
     inputCheckTimer = setTimeout(async () => {
       if (check !== inputCheck) return;
-      if (busy || !$("bench-tools").open) { check.status = "idle"; return; }
+      if (busy || speechSession || !$("bench-tools").open) { check.status = "idle"; return; }
       try {
         const result = await api("/api/context/size", { method: "POST", body: request });
-        if (result?.revision !== request.revision || JSON.stringify(result.selection) !== JSON.stringify(request.selection)
+        if (result?.revision !== request.revision || result.context_tokens !== request.context_tokens || JSON.stringify(result.selection) !== JSON.stringify(request.selection)
           || !Number.isSafeInteger(result.input_bytes) || result.input_bytes < 0
           || !Number.isSafeInteger(result.input_budget) || result.input_budget <= 0
           || result.fits !== (result.input_bytes <= result.input_budget)) {
@@ -333,10 +692,10 @@
   }
 
   function inputSizeText(result) {
-    const amount = `${result.input_bytes.toLocaleString()} / ${result.input_budget.toLocaleString()} bytes, including instructions and output schema.`;
+    const amount = `${result.input_bytes.toLocaleString()} / ${result.input_budget.toLocaleString()} input bytes (conservative guard, not a token count). Requested Ollama window: ${result.context_tokens.toLocaleString()} tokens, including output. Instructions and schema are counted.`;
     return result.fits
-      ? `Local input fits: ${amount}`
-      : `Too much context for one local proposal: ${amount} Select a smaller group of messages, fewer map notes, or fewer document lines. Ollama has not been called; your saved conversation is unchanged.`;
+      ? `Local input fits the byte guard: ${amount}`
+      : `Too much context for one local proposal: ${amount} Choose a larger local window in Connection & privacy, or select fewer messages, map notes, or document lines. Ollama has not been called; your saved conversation is unchanged.`;
   }
 
   function renderInputCheck() {
@@ -347,9 +706,9 @@
       ? `Size check unavailable: ${error.message} No inference was started. ${error.status === 409 ? "Reload state to refresh this selection." : "Check again before generating."}`
       : result ? inputSizeText(result) : "Checking the selection size locally… No model is being called.");
     $("recheck-size").hidden = !error;
-    $("recheck-size").disabled = busy || !state || authFailed || syncRequired;
+    $("recheck-size").disabled = busy || Boolean(speechSession) || !state || authFailed || syncRequired;
     $("bench-reload-state").hidden = !syncRequired && error?.status !== 409;
-    $("bench-reload-state").disabled = busy || !token;
+    $("bench-reload-state").disabled = busy || Boolean(speechSession) || !token;
   }
 
   function choiceCount(choice) {
@@ -358,31 +717,33 @@
 
   function updateControls() {
     scheduleInputCheck();
-    const locked = busy || !state || syncRequired || authFailed;
+    const working = busy || Boolean(speechSession);
+    const locked = working || !state || syncRequired || authFailed;
     document.querySelectorAll("[data-lock]").forEach((control) => { control.disabled = locked; });
     $("bench-tools").setAttribute("aria-busy", String(busy));
-    $("reload-state").disabled = busy || !token;
+    $("reload-state").disabled = working || !token;
     $("map-filter").disabled = !state;
     $("sync-notice").hidden = !syncRequired;
     const isManual = $("provider-select").value === "manual";
     $("message-text").disabled = !state;
-    $("save-message").disabled = locked || !$("message-text").value.trim() || (!isManual && !$("model-select").value);
+    $("save-message").disabled = locked || !$("message-text").value.trim() || $("message-text").value.length > DRAFT_LIMIT || (!isManual && !$("model-select").value);
     $("save-message").textContent = isManual ? "Save for handoff" : "Send";
     $("message-help").textContent = isManual ? "Enter to save locally · Shift+Enter for a new line" : "Enter to send · Shift+Enter for a new line";
     $("message-draft-status").textContent = $("message-text").value.trim()
-      ? busy ? "Next draft — not sent while Pip is working." : "Draft — not yet saved or sent."
+      ? speechSession ? "Keep typing. Finish or cancel dictation before sending." : busy ? "Next draft — not sent while Pip is working." : "Draft — not yet saved or sent."
       : isManual ? "Prepare your prompt in Notebook & bench tools." : "Chat does not change your Person Map.";
     $("chat-model").hidden = isManual;
+    $("local-context-settings").hidden = isManual;
     const unanswered = latestUnanswered();
     $("retry-reply").hidden = isManual || !unanswered || activeReply?.status === "streaming";
-    $("retry-reply").disabled = busy || !token || authFailed || !$("model-select").value;
+    $("retry-reply").disabled = working || !token || authFailed || !$("model-select").value;
     $("chat-status").textContent = chatActivity || (isManual
       ? "Manual handoff: messages save locally. No automatic AI reply."
       : unanswered ? "Your last message is saved without a reply. Retry it or keep writing."
         : chatOmissions || "Your conversation stays here. Keep what helps; question the rest.");
     $("ollama-panel").hidden = isManual;
     $("manual-panel").hidden = !isManual;
-    const provider = isManual ? "Manual handoff — you choose the tool and its provider" : `Ollama — ${$("model-select").value || "no model selected"}`;
+    const provider = isManual ? "Manual handoff — you choose the tool and its provider" : `Ollama — ${$("model-select").value || "no model selected"} · ${Number($("context-tokens").value).toLocaleString()}-token window`;
     $("current-route").textContent = `Task: ${TASKS[$("task-select").value]} · Provider: ${provider}`;
     $("context-counts").textContent = `${selectedMessages.size} / ${MESSAGE_LIMIT} messages selected · ${selectedStatements.size} / ${STATEMENT_LIMIT} map entries selected · ${selectedDocuments.length} / 8 document excerpts`;
     const blockedReason = generationBlock();
@@ -391,9 +752,9 @@
     $("generate-button").disabled = locked || Boolean(blockedReason) || !$("model-select").value || inputCheck.status !== "ready" || !inputCheck.result.fits;
     $("prepare-packet").disabled = locked || Boolean(blockedReason) || Boolean(manualPacket);
     $("submit-reply").disabled = locked || !manualPacket || !$("manual-reply").value.trim();
-    $("discard-packet").disabled = busy || !manualPacket;
-    $("copy-prompt").disabled = busy || !manualPacket;
-    $("refresh-models").disabled = busy || !state || authFailed;
+    $("discard-packet").disabled = working || !manualPacket;
+    $("copy-prompt").disabled = working || !manualPacket;
+    $("refresh-models").disabled = working || !state || authFailed;
     $("export-brief").disabled = locked || !state?.workspace.brief;
     $("apply-import").disabled = locked || !pendingImport;
     $("cancel-import").disabled = busy || !pendingImport;
@@ -401,7 +762,7 @@
     $("cancel-resume").disabled = busy;
     $("save-resume").disabled = locked || !$("resume-text").value.trim() || !$("resume-name").value.trim();
     $("resume-reload").hidden = !syncRequired;
-    $("resume-reload").disabled = busy || !token;
+    $("resume-reload").disabled = working || !token;
     $("open-sources").hidden = !state?.workspace.documents.length;
     $("attachment-route").hidden = !attachedDocuments.length;
     $("attachment-route").textContent = attachedDocuments.length
@@ -411,6 +772,7 @@
       control.disabled = locked || count === 0;
       control.textContent = `Accept selected (${count})`;
     });
+    renderSpeechControls();
     if (manualPacket) {
       $("packet-summary").textContent = `Manual handoff · ${TASKS[manualPacket.selection.task]} · frozen revision ${manualPacket.revision} · ${manualPacket.selection.message_ids.length} messages · ${manualPacket.selection.statement_ids.length} map entries · ${manualPacket.selection.document_ranges.length} document excerpts`;
       const stale = state && manualPacket.revision !== state.revision;
@@ -570,14 +932,14 @@
 
   function recordChatContext(event) {
     if (!event.selection || !Array.isArray(event.selection.message_ids) || !Array.isArray(event.selection.statement_ids) || !Array.isArray(event.selection.document_ranges)
-      || !Number.isInteger(event.omitted_messages) || !Number.isInteger(event.omitted_statements)) {
+      || !Number.isInteger(event.context_tokens) || !Number.isInteger(event.omitted_messages) || !Number.isInteger(event.omitted_statements)) {
       throw new ActionError("The server returned an unexpected chat context. Reload before retrying.", { uncertain: true });
     }
     const selection = event.selection;
     chatOmissions = event.omitted_messages || event.omitted_statements
       ? `Context: ${event.omitted_messages} older messages and ${event.omitted_statements} map notes not included. Inspect in Notebook & bench tools.`
       : "";
-    $("chat-context-summary").textContent = `${selection.message_ids.length} recent messages · ${selection.statement_ids.length} reviewed map notes · ${selection.document_ranges.length} document excerpts · ${event.omitted_messages} messages and ${event.omitted_statements} map notes omitted. Selected source text below; evidence and relationships outside this selection are excluded from the prompt.`;
+    $("chat-context-summary").textContent = `Requested window: ${event.context_tokens.toLocaleString()} tokens · ${selection.message_ids.length} recent messages · ${selection.statement_ids.length} reviewed map notes · ${selection.document_ranges.length} document excerpts · ${event.omitted_messages} messages and ${event.omitted_statements} map notes omitted. Selected source text below; evidence and relationships outside this selection are excluded from the prompt.`;
     const list = $("chat-context");
     list.replaceChildren();
     for (const [kind, ids, items] of [
@@ -764,7 +1126,11 @@
       assistant.append(node("summary", "", "Assistant response (may already be in the conversation)"), node("p", "preserve-lines", proposal.reply.assistant_text));
       card.append(selected, assistant);
       proposal.reply.proposed_statements.forEach((statement, index) => {
-        card.append(proposalItem(choice, "statements", index, `Accept map addition ${index + 1}`, statementContent(statement, true)));
+        const content = statementContent(statement, true);
+        if (proposal.repaired_document_statement_indices?.includes(index)) {
+          content.prepend(node("p", "notice", "Citation checked locally: Pip found a unique matching quote in your selected document and corrected its evidence type, line numbers, or whitespace. Document text stays separate from user speech; no words or punctuation were substituted. Review the source passage below; this does not verify the interpretation."));
+        }
+        card.append(proposalItem(choice, "statements", index, `Accept map addition ${index + 1}`, content));
       });
       proposal.reply.opportunities.forEach((opportunity, index) => {
         card.append(proposalItem(choice, "opportunities", index, `Accept possibility ${index + 1}: ${opportunity.title}`, opportunityContent(opportunity, false, proposal.unverified_opportunity_indices?.includes(index))));
@@ -1101,11 +1467,11 @@
 
   async function sendMessage(event) {
     event.preventDefault();
-    if (busy || !state || syncRequired || authFailed || composing || !$("message-form").reportValidity()) return;
+    if (busy || speechSession || !state || syncRequired || authFailed || composing || !$("message-form").reportValidity()) return;
     const text = $("message-text").value.trim();
     const manual = $("provider-select").value === "manual";
     const model = $("model-select").value;
-    if (!text || (!manual && !model)) return;
+    if (!text || text.length > DRAFT_LIMIT || (!manual && !model)) return;
     const submittedVersion = draftVersion;
     const documentRanges = attachedDocuments.map((range) => ({ ...range }));
     $("message-text").focus({ preventScroll: true });
@@ -1148,7 +1514,7 @@
     $("status-message").textContent = "Talking with your selected local model…";
     try {
       await api("/api/chat", {
-        method: "POST", body: { revision: state.revision, message_id: messageId, model }, timeout: 300000,
+        method: "POST", body: { revision: state.revision, message_id: messageId, model, context_tokens: Number($("context-tokens").value) }, timeout: 300000,
         onEvent: (event) => {
           if (event.type === "context") {
             recordChatContext(event);
@@ -1184,7 +1550,7 @@
   async function retryReply() {
     const message = latestUnanswered();
     const model = $("model-select").value;
-    if (busy || !message || !model || authFailed || $("provider-select").value !== "ollama") return;
+    if (busy || speechSession || !message || !model || authFailed || $("provider-select").value !== "ollama") return;
     $("message-text").focus({ preventScroll: true });
     await runAction("Checking saved history before retrying…", async () => {
       // A dropped stream may have committed after this tab lost its connection.
@@ -1209,7 +1575,7 @@
       const model = $("model-select").value;
       if (!model) throw new ActionError("Choose an installed Ollama model first.");
       const next = await api("/api/generate", {
-        method: "POST", body: { revision: state.revision, selection: currentSelection(), model }, timeout: 300000,
+        method: "POST", body: { revision: state.revision, selection: currentSelection(), model, context_tokens: Number($("context-tokens").value) }, timeout: 300000,
       });
       applyState(next);
       $("review-title").focus();
@@ -1470,7 +1836,9 @@
   }
 
   function clearPrivateDrafts() {
+    discardSpeech({ hide: true, render: false });
     $("message-text").value = "";
+    draftVersion += 1;
     activeReply = null;
     selectedDocuments = [];
     attachedDocuments = [];
@@ -1552,10 +1920,17 @@
       inputCheck = { key: "", status: "idle", result: null, error: null };
       updateControls();
     });
+    $("speech-start").addEventListener("click", startSpeech);
+    $("speech-recheck").addEventListener("click", checkSpeechStatus);
+    $("speech-stop").addEventListener("click", stopSpeech);
+    $("speech-cancel").addEventListener("click", () => discardSpeech());
+    $("speech-dismiss").addEventListener("click", () => discardSpeech({ hide: true }));
+    $("speech-append").addEventListener("click", appendHeldTranscript);
+    $("speech-transcript").addEventListener("input", renderSpeechControls);
     $("message-form").addEventListener("submit", sendMessage);
     $("message-text").addEventListener("input", () => { draftVersion += 1; updateControls(); });
-    $("message-text").addEventListener("compositionstart", () => { composing = true; });
-    $("message-text").addEventListener("compositionend", () => { composing = false; });
+    $("message-text").addEventListener("compositionstart", () => { composing = true; renderSpeechControls(); });
+    $("message-text").addEventListener("compositionend", () => { composing = false; renderSpeechControls(); });
     $("message-text").addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return;
       event.preventDefault();
@@ -1575,6 +1950,7 @@
       updateControls();
     });
     $("model-select").addEventListener("change", updateControls);
+    $("context-tokens").addEventListener("change", updateControls);
     $("manual-reply").addEventListener("input", updateControls);
     $("generate-button").addEventListener("click", generate);
     $("refresh-models").addEventListener("click", () => runAction("Checking installed Ollama models…", async () => {
@@ -1637,8 +2013,9 @@
     $("cancel-import").addEventListener("click", () => { pendingImport = null; renderImport(); });
     $("apply-import").addEventListener("click", importWorkspace);
     $("reset-workspace").addEventListener("click", resetWorkspace);
+    window.addEventListener("pagehide", () => discardSpeech({ hide: true, render: false }));
     window.addEventListener("beforeunload", (event) => {
-      if (busy || manualPacket || pendingImport || editingStatement || feedbackDrafts.size || $("message-text").value.trim() || $("resume-text").value.trim() || attachedDocuments.length) {
+      if (speechSession || $("speech-transcript").value || busy || manualPacket || pendingImport || editingStatement || feedbackDrafts.size || $("message-text").value.trim() || $("resume-text").value.trim() || attachedDocuments.length) {
         event.preventDefault();
         event.returnValue = "";
       }

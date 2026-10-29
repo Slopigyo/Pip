@@ -117,7 +117,7 @@ class ContextTests(OfflineTests):
 
     def test_history_stops_at_first_whole_message_that_does_not_fit(self):
         messages = [Message(role="user", text="Older small turn"), Message(role="assistant", text="é" * 12000), Message(role="user", text="Latest intact")]
-        selection, context = select_chat_context(Workspace(messages=messages), messages[-1].id)
+        selection, context = select_chat_context(Workspace(messages=messages), messages[-1].id, context_tokens=16384)
         self.assertEqual(selection.message_ids, [messages[-1].id])
         self.assertEqual(context.messages[0].text, "Latest intact")
 
@@ -153,7 +153,7 @@ class ContextTests(OfflineTests):
             select_chat_context(workspace, message.id, input_budget=used - 1)
         message.text = "🌿" * 12000
         with self.assertRaises(UserError):
-            select_chat_context(workspace, message.id)
+            select_chat_context(workspace, message.id, context_tokens=16384)
         self.assertEqual(workspace.messages[0].text, "🌿" * 12000)
 
     def test_prompt_has_natural_persona_not_a_proposal_schema_or_extra_roles(self):
@@ -202,7 +202,7 @@ class ChatTests(ChatFixture):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
         self.assertEqual([e["type"] for e in events], ["context", "token", "token", "done"])
-        self.assertEqual(events[0], {"type": "context", "selection": {"task": "conversation", "message_ids": [self.body["message_id"]], "statement_ids": [], "document_ranges": []}, "omitted_messages": 0, "omitted_statements": 0})
+        self.assertEqual(events[0], {"type": "context", "context_tokens": 128000, "selection": {"task": "conversation", "message_ids": [self.body["message_id"]], "statement_ids": [], "document_ranges": []}, "omitted_messages": 0, "omitted_statements": 0})
         self.assertEqual([e["text"] for e in events if e["type"] == "token"], self.provider.chunks)
         self.assertIn("cafés", response.text)
         self.assertNotIn("\\u00e9", response.text)
@@ -248,7 +248,7 @@ class ChatTests(ChatFixture):
 
     def test_oversized_latest_message_is_kept_and_no_model_is_called(self):
         saved = self.client.post("/api/messages", json={"revision": self.body["revision"], "text": "🌿" * 12000}).json()
-        response = self.client.post("/api/chat", json=dict(self.body, revision=saved["revision"], message_id=saved["workspace"]["messages"][-1]["id"]))
+        response = self.client.post("/api/chat", json=dict(self.body, revision=saved["revision"], message_id=saved["workspace"]["messages"][-1]["id"], context_tokens=16384))
         self.assertEqual(response.status_code, 400)
         self.assertIn("saved text is unchanged", response.text)
         self.assertEqual(self.client.get("/api/state").json(), saved)
@@ -495,7 +495,7 @@ class OllamaChatTests(OfflineTests):
         payload = json.loads(request.data)
         self.assertEqual(set(payload), {"model", "messages", "stream", "options"})
         self.assertIs(payload["stream"], True)
-        self.assertEqual(payload["options"], {"temperature": 0.3, "num_ctx": 16384, "num_predict": 1536})
+        self.assertEqual(payload["options"], {"temperature": 0.3, "num_ctx": 128000, "num_predict": 1536})
         self.assertEqual([m["role"] for m in payload["messages"]], ["system", "user", "assistant", "user"])
         self.assertEqual(payload["messages"], chat_messages(self.context))
         self.assertNotIn(PRIVATE, request.data.decode())
@@ -574,7 +574,7 @@ class OllamaChatTests(OfflineTests):
         self.assertTrue(response.closed)
 
     def test_invalid_or_oversized_context_and_model_do_not_make_requests(self):
-        oversized = self.context.model_copy(deep=True)
+        oversized = self.context.model_copy(deep=True, update={"context_tokens": 16384})
         oversized.messages[-1].text = "🌿" * 12000
         unreviewed = self.context.model_copy(deep=True)
         unreviewed.statements[0].confirmed = False

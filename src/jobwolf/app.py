@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
 
+from . import __version__
 from .conversation import CHAT_MAX_REPLY_CHARS, select_chat_context
 from .documents import DocumentError, preview_document
 from .models import (
@@ -45,6 +46,13 @@ from .providers import (
 )
 from .security import LocalBoundary
 from .service import Bench, MissingRecord, UserError, WorkspaceStore, render_brief
+from .speech import (
+    SpeechError,
+    SpeechProvider,
+    SpeechRequest,
+    decode_audio,
+    unavailable_status,
+)
 from .storage import ConflictError, StorageError
 
 
@@ -106,12 +114,15 @@ class _ChatResponse(StreamingResponse):
                 self.lock.release()
 
 
-def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: int = 8765) -> FastAPI:
+def create_app(
+    *, store: WorkspaceStore, provider: Provider, token: str, port: int = 8765,
+    speech: SpeechProvider | None = None,
+) -> FastAPI:
     if not token or len(token) < 24 or not token.isascii():
         raise ValueError("A random ASCII local session token of at least 24 characters is required.")
     if not 1 <= port <= 65535:
         raise ValueError("The port must be between 1 and 65535.")
-    app = FastAPI(title="JobWolf local bench", docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
+    app = FastAPI(title="JobWolf local bench", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
     app.add_middleware(LocalBoundary, token=token, port=port)
     bench = Bench(store)
     inference_lock = Lock()
@@ -125,6 +136,8 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError):
+        if request.url.path.startswith("/api/speech/"):
+            return JSONResponse({"detail": "Invalid speech request. Use Dictate to record up to two minutes of audio.", "state_changed": False}, status_code=422)
         return JSONResponse({"detail": "Invalid request: check required fields, allowed values, sizes, and export format version. Nothing was saved."}, status_code=422)
 
     @app.exception_handler(ConflictError)
@@ -143,6 +156,10 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
     async def document_error(request: Request, error: DocumentError):
         return JSONResponse({"detail": str(error), "state_changed": False}, status_code=400)
 
+    @app.exception_handler(SpeechError)
+    async def speech_error(request: Request, error: SpeechError):
+        return JSONResponse({"detail": str(error), "state_changed": False}, status_code=error.status_code)
+
     @app.exception_handler(ProviderError)
     async def provider_error(request: Request, error: ProviderError):
         # Known provider failures precede persistence; storage/unexpected failures
@@ -158,7 +175,7 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
 
     @app.get("/assets/{name}")
     def asset(name: str):
-        types = {"app.js": "text/javascript", "style.css": "text/css"}
+        types = {"app.js": "text/javascript", "speech-recorder.js": "text/javascript", "style.css": "text/css"}
         if name not in types:
             raise HTTPException(404, "Resource not found.")
         return FileResponse(web / name, media_type=types[name])
@@ -170,6 +187,30 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
     @app.get("/api/models")
     def models():
         return {"models": provider.list_models(), "endpoint": provider.base_url, "preferred_model": "Lyra:latest"}
+
+    @app.get("/api/speech/status")
+    def speech_status():
+        try:
+            return speech.status() if speech is not None else unavailable_status()
+        except Exception:  # noqa: BLE001 -- No filesystem/provider diagnostics in the response.
+            raise SpeechError("Could not check local speech setup. Run setup-speech.cmd and try again.", 503) from None
+
+    @app.post("/api/speech/transcribe")
+    def speech_transcribe(body: SpeechRequest):
+        audio = decode_audio(body.audio_base64)
+        if speech is None:
+            raise SpeechError(unavailable_status().detail, 503)
+        if not inference_lock.acquire(blocking=False):
+            raise SpeechError("A local inference is already running. Wait for it to finish before transcribing.", 409)
+        try:
+            # No Bench/store/context access: transcription is an unsaved composer draft.
+            return speech.transcribe(audio)
+        except SpeechError:
+            raise
+        except Exception:  # noqa: BLE001 -- Third-party exceptions can contain private audio/text.
+            raise SpeechError("Local transcription could not finish. Check speech setup and try again; your workspace is unchanged.", 502) from None
+        finally:
+            inference_lock.release()
 
     @app.post("/api/messages")
     def message(body: MessageRequest):
@@ -216,9 +257,11 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
     @app.post("/api/context/size")
     def context_size(body: ContextRequest):
         selected = bench.context(body.revision, body.selection)
+        selected.context_tokens = body.context_tokens
         size = structured_input_size(selected)
         return {
             "revision": body.revision, "selection": body.selection.model_dump(),
+            "context_tokens": body.context_tokens,
             "input_bytes": size.input_bytes, "input_budget": size.input_budget, "fits": size.fits,
         }
 
@@ -228,6 +271,7 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
             raise HTTPException(409, "A local inference is already running. Wait before trying again.")
         try:
             selected = bench.context(body.revision, body.selection)
+            selected.context_tokens = body.context_tokens
             structured_input_size(selected).require_fits()
             if body.model not in provider.list_models():
                 raise UserError("Select an installed local model. JobWolf never downloads models automatically.")
@@ -239,7 +283,7 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
     @app.post("/api/chat")
     def chat(body: ChatRequest):
         _, workspace = bench.load(body.revision)
-        selection, selected = select_chat_context(workspace, body.message_id)
+        selection, selected = select_chat_context(workspace, body.message_id, context_tokens=body.context_tokens)
 
         def preflight() -> None:
             bench.load(body.revision)
@@ -256,6 +300,7 @@ def create_app(*, store: WorkspaceStore, provider: Provider, token: str, port: i
             try:
                 yield _event({
                     "type": "context", "selection": selection.model_dump(mode="json"),
+                    "context_tokens": body.context_tokens,
                     "omitted_messages": len(workspace.messages) - len(selected.messages),
                     "omitted_statements": len(workspace.statements) - len(selected.statements),
                 })

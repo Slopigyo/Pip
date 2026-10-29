@@ -640,7 +640,8 @@ try {
   assert.equal(uiRequests("/api/generate").length, 0);
   assert.equal(uiRequests("/api/chat").length, 4);
   assert.equal(uiRequests("/api/messages").length, 5);
-  console.log("Checking 18-message proposal sizing, stale checks, and safe failure recovery…");
+  console.log("Checking 18-message proposal sizing at the smaller 16K window, stale checks, and safe failure recovery…");
+  await evaluate("document.getElementById('context-tokens').value = '16384'; document.getElementById('context-tokens').dispatchEvent(new Event('change'))");
   let largeState = await apiState();
   while (largeState.workspace.messages.length < 18) {
     largeState = await api("/api/messages", {

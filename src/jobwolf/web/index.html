@@ -34,6 +34,12 @@
         </div>
         <details class="connection-details">
           <summary>Connection &amp; privacy</summary>
+          <div id="local-context-settings">
+            <label for="context-tokens">Local context window (tokens)</label>
+            <select id="context-tokens" data-lock aria-describedby="context-window-help"><option value="16384">16,384 — smaller memory footprint</option><option value="32768">32,768 tokens</option><option value="65536">65,536 tokens</option><option value="128000" selected>128,000 tokens — default</option></select>
+            <p id="context-window-help" class="help">Applies to your next chat or proposal, including retries. 128K can use much more memory or spill into system RAM; try a smaller window if it is slow or fails. The model must support the requested window. This setting lasts for this page session.</p>
+            <p class="help">Input checks still count bytes, not exact tokens. Until model-specific token counting is available, Pip conservatively budgets one input byte per token, reserving 4,096 for output and framing. At 128,000 tokens this allows 123,904 input bytes, not 128,000 tokens of text. No extra sources are automatically selected.</p>
+          </div>
           <p id="model-status" class="help" role="status">Models have not been loaded.</p>
           <p id="model-endpoint" class="small muted"></p>
           <button id="refresh-models" type="button" data-lock>Refresh models</button>
@@ -47,7 +53,24 @@
           <textarea id="message-text" rows="2" maxlength="12000" required aria-describedby="message-help message-draft-status" placeholder="I keep coming back to…"></textarea>
           <div id="chat-attachments" class="attachment-list" hidden></div>
           <p id="attachment-route" class="help" hidden></p>
-          <div class="toolbar compact composer-sources"><button id="add-resume" type="button" data-lock>Add a résumé</button><button id="open-sources" type="button" data-lock hidden>Saved sources</button><span class="small muted">Optional — start with your story or a document.</span></div>
+          <div class="toolbar compact composer-sources"><button id="speech-start" type="button" aria-controls="speech-panel" aria-expanded="false" title="Dictate locally with Granite; review before sending">Dictate</button><button id="add-resume" type="button" data-lock>Add a résumé</button><button id="open-sources" type="button" data-lock hidden>Saved sources</button><span class="small muted">Optional — start with your story or a document.</span></div>
+          <div id="speech-panel" class="speech-panel" hidden>
+            <p id="speech-route" class="help"></p>
+            <p id="speech-status" class="small" role="status" aria-live="polite" aria-atomic="true"></p>
+            <div class="toolbar compact">
+              <span id="speech-timer" class="speech-timer" role="timer" aria-live="off" aria-label="Recording elapsed time and limit" hidden>0:00 / 2:00</span>
+              <button id="speech-stop" type="button" hidden>Stop &amp; transcribe</button>
+              <button id="speech-cancel" type="button" hidden>Cancel</button>
+              <button id="speech-recheck" type="button">Check again</button>
+              <button id="speech-dismiss" type="button">Dismiss</button>
+            </div>
+            <div id="speech-overflow" hidden>
+              <label for="speech-transcript">Transcript kept separately</label>
+              <textarea id="speech-transcript" rows="3" aria-describedby="speech-transcript-help" autocomplete="off"></textarea>
+              <p id="speech-transcript-help" class="help">Edit or copy this text, or make room in your draft and choose Add to draft. Nothing is truncated. This unsaved transcript stays only in this tab until added, discarded, or the page closes.</p>
+              <button id="speech-append" type="button">Add to draft</button>
+            </div>
+          </div>
           <div class="composer-actions"><div><p id="message-help" class="help">Enter to send · Shift+Enter for a new line</p><span id="message-draft-status" class="small muted">Only sent messages are saved.</span></div><button id="save-message" class="primary" type="submit" data-lock>Send</button></div>
         </form>
       </section>

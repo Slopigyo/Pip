@@ -131,6 +131,12 @@ section[id] { scroll-margin-top: 1rem; }
 .composer textarea { min-height: 4rem; max-height: 10rem; line-height: 1.55; background: var(--input); }
 .composer-sources { margin: .35rem 0; }
 .composer-sources button { min-height: 32px; }
+.speech-panel { border-left: 2px solid var(--accent); padding: .15rem .7rem .6rem; margin: .5rem 0; max-height: 16rem; overflow-y: auto; }
+.speech-panel .toolbar { margin: .4rem 0; }
+.speech-panel label { font-size: .85rem; }
+.speech-panel > p { margin: .35rem 0; }
+.speech-timer { color: var(--danger); font-variant-numeric: tabular-nums; font-size: .85rem; font-weight: 700; white-space: nowrap; }
+#speech-stop { border-color: var(--accent); }
 .attachment-list { max-height: 8rem; overflow-y: auto; font-size: .8rem; }
 .attachment-list details { margin: .15rem 0; }
 .attachment-list summary { min-height: 32px; padding: .25rem 0; }

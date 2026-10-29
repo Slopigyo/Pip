@@ -24,7 +24,9 @@ py -m venv .venv
 .venv\Scripts\python.exe -m jobwolf
 ```
 
-After installation, `start-bench.cmd` launches it too. Read [the prototype guide](docs/PROTOTYPE.md) for the workflow, privacy/recovery notes, and current limits; see [dependency and licensing choices](docs/DEPENDENCIES.md) before packaging or choosing a project license.
+After installation, `start-bench.cmd` launches it too. Local calls request a **128,000-token context window by default**; lower it under **Connection & privacy** if memory use or latency is excessive. Input preflight still uses a separately labeled conservative byte guard, not an exact token counter. Read [the prototype guide](docs/PROTOTYPE.md) for the workflow, privacy/recovery notes, and current limits; see [dependency and licensing choices](docs/DEPENDENCIES.md) before packaging or choosing a project license.
+
+**Optional local dictation:** run `setup-speech.cmd` once to download/verify about **3.2 GB** of Granite Speech 5.0 2B Q8 and the Windows Vulkan runtime. Then use **Dictate → Stop & transcribe → review/edit → Send**. Audio is processed locally, up to two minutes at a time, without supplying your profile or saving raw audio. The speech model unloads after each transcription and is separate from Ollama chat. See [setup, privacy, and latency details](docs/PROTOTYPE.md#optional-local-dictation-granite).
 
 Private payloads are encrypted with Windows DPAPI before SQLite persistence—not whole-file SQLite encryption. JSON and Markdown exports are deliberately plaintext. The app has no live web browsing, verified world-data catalog, telemetry, or automatic cloud fallback; generated possibilities are hypotheses for exploration.
 
@@ -420,10 +422,10 @@ There is something intentionally hopeful in that idea. Technology should help pe
 
 ## Status
 
-Early Windows-local chat-first prototype with open-bench tools; not a packaged public product.
+**v0.2.0 — Reviewed résumé intake and local speech-to-text milestones.** See [the changelog](CHANGELOG.md) for this checkpoint. This remains a Windows-local chat-first prototype with open-bench tools, not a packaged public product.
 
 The first implementation covers conversational experiments, an editable persistent Person Map, explicit review of model proposals, exploratory possibilities, feedback, and a portable Search Brief. Its small local architecture is intended to test self-insight before expanding research integrations or public-product packaging.
 
-The [next-phase plan](docs/NEXT_PHASE.md) now includes connected-path discovery and optional reviewed résumé intake: local previews, saved text snapshots, selected excerpts for chat or Person Map proposals, citations, and deletion. Workspace JSON v1 upgrades to v2 on the next save without a reset; the database path is unchanged. Research/comparison tools and speech-input evaluation remain planned. Model insight quality still depends on the selected model and user review.
+The [next-phase plan](docs/NEXT_PHASE.md) now includes connected-path discovery and optional reviewed résumé intake: local previews, saved text snapshots, selected excerpts for chat or Person Map proposals, citations, and deletion. Workspace JSON v1 upgrades to v2 on the next save without a reset; the database path is unchanged. The initial résumé-to-note workflow is confirmed working, and the user reports that Granite dictation is fast and accurate in initial hands-on use. Research/comparison tools remain planned. This milestone is not a general accuracy benchmark; model insight and transcripts still require user review.
 
 Licensing and long-term commercial packaging remain open design decisions.

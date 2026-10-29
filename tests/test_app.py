@@ -164,7 +164,8 @@ class AppTests(unittest.TestCase):
                 operation.assert_not_called()
         self.assertEqual(size, {
             "revision": state["revision"], "selection": {"task": "conversation", **selection, "document_ranges": []},
-            "input_bytes": len(packet["prompt"].encode("utf-8")), "input_budget": 12288, "fits": True,
+            "context_tokens": 128000,
+                        "input_bytes": len(packet["prompt"].encode("utf-8")), "input_budget": 123904, "fits": True,
         })
         self.assertNotIn(selected_text, json.dumps(size, ensure_ascii=False))
         self.assertNotIn(PRIVATE, json.dumps(size))
@@ -178,7 +179,7 @@ class AppTests(unittest.TestCase):
         for _ in range(18):
             state = self.post("/api/messages", {"revision": state["revision"], "text": text})
         selection = {"task": "conversation", "message_ids": [message["id"] for message in state["workspace"]["messages"]], "statement_ids": []}
-        body = {"revision": state["revision"], "selection": selection}
+        body = {"revision": state["revision"], "selection": selection, "context_tokens": 16384}
         before = self.store.load()
         with (
             patch.object(self.provider, "list_models", side_effect=AssertionError("Unexpected model discovery")) as models,
@@ -186,7 +187,7 @@ class AppTests(unittest.TestCase):
             patch.object(self.store, "save", side_effect=AssertionError("Unexpected mutation")) as save,
         ):
             size = self.post("/api/context/size", body)
-            self.assertEqual(set(size), {"revision", "selection", "input_bytes", "input_budget", "fits"})
+            self.assertEqual(set(size), {"revision", "selection", "context_tokens", "input_bytes", "input_budget", "fits"})
             self.assertEqual(size["revision"], state["revision"])
             self.assertEqual(size["selection"], {**selection, "document_ranges": []})
             self.assertEqual(size["input_budget"], 12288)

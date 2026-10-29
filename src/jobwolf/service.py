@@ -15,6 +15,7 @@ from .models import (
     ContextBundle,
     ContextDocument,
     ContextSelection,
+    DocumentEvidence,
     DocumentSaveRequest,
     DocumentSelection,
     DocumentSource,
@@ -104,26 +105,137 @@ def require_chat_message(workspace: Workspace, message_id: str) -> None:
         raise UserError("The conversation is at its saved-message limit. Export your workspace before starting a new one.")
 
 
+def _cited_document_text(evidence: DocumentEvidence, context: ContextBundle) -> str | None:
+    passage = next((p for p in context.documents if _within(evidence, [p])), None)
+    if passage is None:
+        return None
+    return "\n".join(passage.text.split("\n")[evidence.start_line - passage.start_line:evidence.end_line - passage.start_line + 1])
+
+
+def _citation_error(note: int, citation: int, evidence: DocumentEvidence, reason: str) -> UserError:
+    # Positions are actionable without echoing private filenames, claims or quotes.
+    return UserError(
+        f"Map note {note + 1}, document citation {citation + 1} "
+        f"(claimed lines {evidence.start_line}–{evidence.end_line}): {reason} "
+        "Nothing was changed. Check the selected excerpt or try a shorter passage."
+    )
+
+
+def _quote_matches(quote: str, passages: list[ContextDocument], *, whitespace: bool = False) -> list[tuple[ContextDocument, int, int]]:
+    pattern = re.compile(r"\s+".join(re.escape(part) for part in quote.split()) if whitespace else re.escape(quote))
+    matches = []
+    for passage in passages:
+        offset = 0
+        while (match := pattern.search(passage.text, offset)) is not None:
+            matches.append((passage, match.start(), match.end()))
+            if len(matches) == 2:
+                return matches  # Two is enough to reject ambiguity, including overlapping occurrences.
+            offset = match.start() + 1
+    return matches
+
+
+def _message_citation_error(note: int, citation: int, reason: str) -> UserError:
+    return UserError(
+        f"Map note {note + 1}, message citation {citation + 1}: {reason} "
+        "Nothing was changed. Try generating the proposal again or correct its citation."
+    )
+
+
+def _resolve_document_quote(document_id: str, quote: str, context: ContextBundle) -> DocumentEvidence:
+    passages = [p for p in context.documents if p.document_id == document_id]
+    if not passages:
+        raise UserError("The cited document was not selected; other documents were not searched.")
+    matches = _quote_matches(quote, passages)
+    if not matches:
+        matches = _quote_matches(quote, passages, whitespace=True)
+    if len(matches) != 1:
+        raise UserError(
+            "The quote matches more than one location in the selected source; Pip will not guess which one supports this note."
+            if matches else
+            "The quote was not found in the selected source, even allowing whitespace differences. Paraphrases, altered punctuation and invented quotes are not accepted."
+        )
+    passage, start, end = matches[0]
+    original_quote = passage.text[start:end]
+    if len(original_quote) > 2000:
+        raise UserError("The original passage exceeds the quotation limit; use a shorter quote.")
+    return DocumentEvidence(
+        document_id=document_id,
+        start_line=passage.start_line + passage.text.count("\n", 0, start),
+        end_line=passage.start_line + passage.text.count("\n", 0, end - 1),
+        quote=original_quote,
+    )
+
+
+def resolve_document_citations(reply: ModelReply, context: ContextBundle) -> list[int]:
+    """Repair the caller's draft copy using only uniquely located selected-source text.
+
+    No fuzzy/semantic matching, cross-document lookup, source expansion, or model
+    retry. Canonical evidence still passes the ordinary exact-quote validator.
+    """
+    repaired = []
+    document_ids = {p.document_id for p in context.documents}
+    message_ids = {m.id for m in context.messages}
+    for note_index, draft in enumerate(reply.proposed_statements):
+        changed = False
+        for citation_index, evidence in enumerate(draft.document_evidence):
+            cited = _cited_document_text(evidence, context)
+            if cited is not None and evidence.quote in cited:
+                continue
+            try:
+                draft.document_evidence[citation_index] = _resolve_document_quote(evidence.document_id, evidence.quote, context)
+            except UserError as error:
+                raise _citation_error(note_index, citation_index, evidence, str(error)) from None
+            changed = True
+
+        message_evidence = []
+        for citation_index, evidence in enumerate(draft.evidence):
+            # A selected document ID in the wrong field is recoverable. Never
+            # guess an ID from the quote or override a selected message's identity.
+            if evidence.message_id not in document_ids or evidence.message_id in message_ids:
+                message_evidence.append(evidence)
+                continue
+            try:
+                resolved = _resolve_document_quote(evidence.message_id, evidence.quote, context)
+            except UserError as error:
+                raise _message_citation_error(note_index, citation_index, str(error)) from None
+            if resolved not in draft.document_evidence:
+                if len(draft.document_evidence) >= 8:
+                    raise _message_citation_error(note_index, citation_index, "Correcting the evidence type would exceed the limit of eight document citations per note.")
+                draft.document_evidence.append(resolved)
+            changed = True
+        if len(message_evidence) != len(draft.evidence):
+            draft.evidence = message_evidence
+            if draft.source == "explicit" and not draft.evidence:
+                draft.source = "document"
+        if changed:
+            repaired.append(note_index)
+    return repaired
+
+
 def validate_reply(reply: ModelReply, context: ContextBundle) -> None:
     user_messages = {m.id: m.text for m in context.messages if m.role == "user"}
     statement_ids = {s.id for s in context.statements}
-    for draft in reply.proposed_statements:
+    for note_index, draft in enumerate(reply.proposed_statements):
         if draft.source == "explicit" and not draft.evidence:
             raise UserError("An explicit model assertion needs an exact quote from a selected user message.")
         if draft.source != "explicit" and draft.flexibility == "hard_limit":
             raise UserError("An inference or document claim cannot establish a hard limit. Edit or clarify it first.")
         if draft.source == "document" and not draft.document_evidence:
             raise UserError("A document claim needs an exact quote from a selected document excerpt.")
-        for evidence in draft.document_evidence:
-            passage = next((p for p in context.documents if _within(evidence, [p])), None)
-            if passage is None:
-                raise UserError("Proposed document evidence is outside the selected excerpts.")
-            cited = "\n".join(passage.text.split("\n")[evidence.start_line - passage.start_line:evidence.end_line - passage.start_line + 1])
+        for citation_index, evidence in enumerate(draft.document_evidence):
+            cited = _cited_document_text(evidence, context)
+            if cited is None:
+                raise _citation_error(note_index, citation_index, evidence, "The cited lines are outside the selected excerpts.")
             if evidence.quote not in cited:
-                raise UserError("Proposed document evidence must quote its selected lines exactly.")
-        for evidence in draft.evidence:
+                raise _citation_error(note_index, citation_index, evidence, "The quotation does not exactly match the cited source lines.")
+        for citation_index, evidence in enumerate(draft.evidence):
             if evidence.message_id not in user_messages or evidence.quote not in user_messages[evidence.message_id]:
-                raise UserError("Proposed evidence must quote a selected user message exactly.")
+                reason = (
+                    "No user messages were selected, but the model returned a message citation that could not be verified as document evidence."
+                    if not user_messages else
+                    "The citation must name a selected user message and quote it exactly; assistant replies and document text are not user speech."
+                )
+                raise _message_citation_error(note_index, citation_index, reason)
         if not set(draft.related_statement_ids) <= statement_ids:
             raise UserError("A proposal links to a statement outside the selected context.")
     for opportunity in reply.opportunities:
@@ -267,6 +379,7 @@ class Bench:
         _, workspace = self.load(revision)
         context = select_context(workspace, selection)
         reply = reply.model_copy(deep=True)
+        repaired_citations = resolve_document_citations(reply, context)
         allowed_ids = {statement.id for statement in context.statements}
         unverified_indices = []
         for index, opportunity in enumerate(reply.opportunities):
@@ -284,6 +397,7 @@ class Bench:
             workspace.proposals.append(Proposal(
                 reply=reply, selection=selection, based_on_map_version=workspace.map_version, origin=origin,
                 unverified_opportunity_indices=unverified_indices,
+                repaired_document_statement_indices=repaired_citations,
             ))
         return self._save(workspace, revision)
 

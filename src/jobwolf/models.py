@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from .context_limits import DEFAULT_CONTEXT_TOKENS, ContextTokens
+
 Domain = Literal["background", "work", "environment", "life", "place", "money", "direction"]
 DOMAINS: dict[str, str] = {
     "background": "What You Bring",
@@ -207,6 +209,8 @@ class ContextSelection(StrictModel):
 
 class ContextBundle(StrictModel):
     task: Task
+    # Runtime tuning is not personal context and must stay out of prompt exports.
+    context_tokens: ContextTokens = Field(default=DEFAULT_CONTEXT_TOKENS, exclude=True)
     geography: Geography = GEOGRAPHY
     messages: list[Message]
     statements: list[Statement]
@@ -348,6 +352,7 @@ class StatementRequest(RevisionRequest):
 
 class ContextRequest(RevisionRequest):
     selection: ContextSelection
+    context_tokens: ContextTokens = DEFAULT_CONTEXT_TOKENS
 
 
 class GenerateRequest(ContextRequest):
@@ -357,6 +362,7 @@ class GenerateRequest(ContextRequest):
 class ChatRequest(RevisionRequest):
     model: str = Field(min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
     message_id: Identifier
+    context_tokens: ContextTokens = DEFAULT_CONTEXT_TOKENS
 
 
 class ManualReplyRequest(ContextRequest):

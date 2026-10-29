@@ -225,7 +225,7 @@ class PromptTests(OfflineTestCase):
                         size = structured_input_size(context)
                         prompt = build_prompt(context)
                     self.assertEqual(size.input_bytes, len(prompt.encode("utf-8")))
-                    self.assertEqual(size.input_budget, 12288)
+                    self.assertEqual(size.input_budget, 123904)
                     self.assertIs(size.fits, True)
                     self.assertNotIn(_PRIVATE, repr(size))
                     self.assertEqual(context.model_dump(mode="json"), before)
@@ -233,7 +233,7 @@ class PromptTests(OfflineTestCase):
     def test_exact_input_budget_succeeds_then_fails_without_trimming(self):
         for text in ("x", 'caf\u00e9 \U0001f43a\n"quoted"\\'):
             with self.subTest(text=text):
-                context = ContextBundle(task="conversation", messages=[Message(id=_USER_ID, role="user", text=text, created_at=_TIME)], statements=[])
+                context = ContextBundle(task="conversation", messages=[Message(id=_USER_ID, role="user", text=text, created_at=_TIME)], statements=[], context_tokens=16384)
                 used = len(build_prompt(context).encode("utf-8"))
                 context.messages[0].text += "x" * (12288 - used)
                 size = structured_input_size(context)
@@ -254,8 +254,8 @@ class PromptTests(OfflineTestCase):
                 self.assertEqual(_selected_json(build_prompt(context)), before)
                 self.assertEqual(context.model_dump(mode="json"), before)
 
-    def test_manual_budget_stays_larger_and_has_an_exact_boundary(self):
-        context = ContextBundle(task="conversation", messages=[Message(role="user", text="x" * 10000, created_at=_TIME) for _ in range(5)], statements=[])
+    def test_manual_budget_is_independent_and_has_an_exact_boundary(self):
+        context = ContextBundle(task="conversation", messages=[Message(role="user", text="x" * 10000, created_at=_TIME) for _ in range(5)], statements=[], context_tokens=16384)
         context.messages.append(Message(role="user", text="caf\u00e9 \U0001f43a", created_at=_TIME))
         used = len(build_prompt(context).encode("utf-8"))
         context.messages[-1].text += "x" * (65536 - used)
@@ -315,7 +315,7 @@ class ConnectedPathPromptTests(OfflineTestCase):
             with self.subTest(task=task):
                 size = structured_input_size(ContextBundle(task=task, messages=[], statements=[]))
                 self.assertLessEqual(size.input_bytes, maximum)
-                self.assertEqual(size.input_budget, 12288)
+                self.assertEqual(size.input_budget, 123904)
                 self.assertTrue(size.fits)
 
 
@@ -627,7 +627,7 @@ class OllamaRequestTests(OfflineTestCase):
         self.assertEqual(payload["model"], "custom/insight:q4_K_M")
         self.assertIs(payload["stream"], False)
         self.assertEqual(payload["format"], providers._reply_schema(self.context))
-        self.assertEqual(payload["options"], {"temperature": 0.3, "num_ctx": 16384, "num_predict": 3072})
+        self.assertEqual(payload["options"], {"temperature": 0.3, "num_ctx": 128000, "num_predict": 3072})
         self.assertEqual([message["role"] for message in payload["messages"]], ["system", "user"])
         self.assertEqual(payload["messages"][0]["content"], providers._system_prompt(self.context))
         sent_prompt = "\n\n".join(message["content"] for message in payload["messages"])
@@ -655,11 +655,11 @@ class OllamaRequestTests(OfflineTestCase):
     def test_oversized_context_never_makes_a_request(self):
         with patch.object(self.provider._opener, "open") as network:
             with self.assertRaisesRegex(ProviderError, "budget"):
-                self.provider.generate("custom:latest", _context(text="x" * 10000))
+                self.provider.generate("custom:latest", _context(text="x" * 10000).model_copy(update={"context_tokens": 16384}))
             network.assert_not_called()
 
     def test_eighteen_selected_messages_fail_before_any_network_or_model_discovery(self):
-        context = ContextBundle(task="conversation", messages=[Message(role="user", text="x" * 300, created_at=_TIME) for _ in range(18)], statements=[])
+        context = ContextBundle(task="conversation", messages=[Message(role="user", text="x" * 300, created_at=_TIME) for _ in range(18)], statements=[], context_tokens=16384)
         before = context.model_dump(mode="json")
         size = structured_input_size(context)
         self.assertEqual(size.input_bytes, len(build_prompt(context).encode("utf-8")))
@@ -676,6 +676,7 @@ class OllamaRequestTests(OfflineTestCase):
         for text in ("x", 'caf\u00e9 \U0001f43a\n"quoted"\\'):
             with self.subTest(text=text):
                 context = _context(text=text)
+                context.context_tokens = 16384
                 context.messages[0].text += "x" * (12288 - len(build_prompt(context).encode("utf-8")))
                 before = context.model_dump(mode="json")
                 response = _Response(b'{"message":{"content":"{\\"assistant_text\\":\\"Synthetic reply\\"}"},"done":true}')

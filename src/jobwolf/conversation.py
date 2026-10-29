@@ -2,10 +2,11 @@
 
 import json
 
+from .context_limits import DEFAULT_CONTEXT_TOKENS, ContextTokens, local_input_bytes
 from .models import ContextBundle, ContextSelection, Workspace
 from .service import UserError, require_chat_message, select_context
 
-CHAT_INPUT_BYTES = 14000
+CHAT_INPUT_BYTES = local_input_bytes()
 CHAT_MAX_MESSAGES = 12
 CHAT_MAX_REPLY_CHARS = 12000
 CHAT_SYSTEM_PROMPT = """You are Pip (Personal Insight Pathfinder), a warm, grounded, curious field
@@ -63,7 +64,8 @@ def chat_input_bytes(context: ContextBundle) -> int:
 
 
 def select_chat_context(
-    workspace: Workspace, message_id: str, *, input_budget: int = CHAT_INPUT_BYTES,
+    workspace: Workspace, message_id: str, *, input_budget: int | None = None,
+    context_tokens: ContextTokens = DEFAULT_CONTEXT_TOKENS,
 ) -> tuple[ContextSelection, ContextBundle]:
     """Keep the newest message whole, then a consecutive suffix, then reviewed map.
 
@@ -71,9 +73,11 @@ def select_chat_context(
     preferring hard limits and high importance. Nothing is split or summarized.
     Evidence and relationships outside the selection are removed by select_context.
     """
+    if input_budget is None:
+        input_budget = local_input_bytes(context_tokens)
     require_chat_message(workspace, message_id)
     selection = ContextSelection(message_ids=[message_id], document_ranges=workspace.messages[-1].document_ranges)
-    context = select_context(workspace, selection)
+    context = select_context(workspace, selection).model_copy(update={"context_tokens": context_tokens})
     if chat_input_bytes(context) > input_budget:
         raise UserError(
             "Your latest message and any attached excerpts exceed the chat input budget. Your saved text is unchanged; "
@@ -81,7 +85,7 @@ def select_chat_context(
         )
     for message in reversed(workspace.messages[-CHAT_MAX_MESSAGES:-1]):
         candidate = selection.model_copy(update={"message_ids": [message.id, *selection.message_ids]})
-        bundle = select_context(workspace, candidate)
+        bundle = select_context(workspace, candidate).model_copy(update={"context_tokens": context_tokens})
         if chat_input_bytes(bundle) > input_budget:
             break  # Do not skip a turn and imply that disconnected history is consecutive.
         selection, context = candidate, bundle
@@ -95,7 +99,7 @@ def select_chat_context(
         if len(selection.statement_ids) == 100:
             break
         candidate = selection.model_copy(update={"statement_ids": [*selection.statement_ids, statement.id]})
-        bundle = select_context(workspace, candidate)
+        bundle = select_context(workspace, candidate).model_copy(update={"context_tokens": context_tokens})
         if chat_input_bytes(bundle) <= input_budget:
             selection, context = candidate, bundle
     return selection, context
