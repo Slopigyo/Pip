@@ -226,12 +226,16 @@ class Proposal(StrictModel):
     created_at: datetime = Field(default_factory=now)
     # Application-owned review metadata, deliberately absent from ModelReply.
     unverified_opportunity_indices: list[Annotated[int, Field(ge=0, strict=True)]] = Field(default_factory=list, max_length=6)
+    repaired_document_statement_indices: list[Annotated[int, Field(ge=0, strict=True)]] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode="after")
     def validate_warning_indices(self) -> "Proposal":
         indices = self.unverified_opportunity_indices
         if len(indices) != len(set(indices)) or any(i >= len(self.reply.opportunities) for i in indices):
             raise ValueError("Link warnings must identify distinct opportunities in this proposal")
+        indices = self.repaired_document_statement_indices
+        if len(indices) != len(set(indices)) or any(i >= len(self.reply.proposed_statements) for i in indices):
+            raise ValueError("Citation repair warnings must identify distinct statements in this proposal")
         return self
 
 

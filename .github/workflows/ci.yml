@@ -1,0 +1,45 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install Python test dependencies
+        run: python -m pip install -c constraints.txt -e ".[test]"
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          node --check src/jobwolf/web/app.js
+          node --check src/jobwolf/web/speech-recorder.js
+
+      - name: Test speech UI with mocked browser and audio APIs
+        run: node --test tests/test_speech_ui.mjs
+
+      # Explicit discovery excludes the opt-in smoke_* scripts.
+      - name: Run deterministic Python tests
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v

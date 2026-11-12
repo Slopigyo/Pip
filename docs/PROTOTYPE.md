@@ -2,11 +2,12 @@
 
 Pip — **Personal Insight Pathfinder** (formerly JobWolf) — is a Windows-local experiment for **conversation → reviewed Person Map → exploratory possibilities → portable insight/Search Brief**. It prioritizes useful self-insight, not a job index. The initial scope is the contiguous 48 United States plus Washington, DC; Alaska, Hawaii, and territories are not included.
 
-## Start on this machine
+
+## Start on Windows
 
 This guide covers **v0.2.0**, the résumé and local dictation milestone. Check the code's version with `.venv\Scripts\python.exe -m jobwolf --version`; this does not open the workspace or start a model.
 
-Python 3.14 is installed on the development machine. Python 3.12+ is supported by the code; Windows is required for the runtime storage adapter.
+Python 3.14 is the reference development/CI environment. The package requires Python 3.12+; other Python versions have not been covered by the single-version CI configuration. Windows is required for the runtime storage adapter.
 
 From PowerShell in the project folder:
 
@@ -20,7 +21,7 @@ Installation downloads Python packages from PyPI; it does not upload a profile, 
 
 The app opens a browser on `127.0.0.1:8765`. Its terminal prints a startup link with a per-run access token in the URL fragment. Treat that link as private. Leave the terminal open; Ctrl+C stops the app. Restarting changes the token, so reopen the new startup link. `--no-browser` only prints the link; `--port 8766` chooses another port. Do not expose this prototype through a tunnel or reverse proxy.
 
-Ollama should already be running. **Lyra:latest** is initially selected when installed, as requested. Change models in the interface whenever useful; model selection never starts inference. No models are downloaded automatically. The app uses `http://127.0.0.1:11434`; `--ollama-url` accepts only HTTP loopback endpoints.
+Ollama should already be running with a suitable local model installed. **Lyra:latest** is a historical development-bench preference and is selected when present, not a required or bundled model. Choose your own installed model in the interface; model selection never starts inference. No chat models are downloaded automatically. The app uses `http://127.0.0.1:11434`; `--ollama-url` accepts only HTTP loopback endpoints.
 
 ## Chat first
 
@@ -191,12 +192,20 @@ The unit/HTTP tests use synthetic data and never invoke a model. Windows storage
 
 Opt-in live checks (not part of unittest discovery):
 
-- For capture compatibility only, `node tests/smoke_speech_capture.mjs .venv/Scripts/python.exe` checks the shared Chrome, and `.venv\Scripts\python.exe tests\smoke_speech_firefox.py "C:\Program Files\Mozilla Firefox\firefox.exe"` checks an existing Firefox installation. Each uses a disposable profile, fake microphone, real UI/recorder scripts, and a synthetic transcription response. They check native-rate capture, valid 16 kHz WAV output, draft preservation, and microphone release, without accessing a real microphone, user workspace, or model. These are narrow optional regressions, not a browser sweep to run after every edit.
+For either Chrome script, explicitly configure an **existing** Chrome/Chromium executable. There is no machine-specific default, automatic discovery, download, or Edge fallback. From PowerShell, enter the full path without surrounding quotes:
+
+```powershell
+$env:CHROME_EXECUTABLE_PATH = Read-Host 'Full path to existing chrome.exe or chromium.exe'
+```
+
+Run only the check relevant to the change. These browser checks use disposable profiles, not your normal browser profile.
+
+- For capture compatibility only, `node tests/smoke_speech_capture.mjs .venv/Scripts/python.exe` checks the configured Chrome/Chromium, and `.venv\Scripts\python.exe tests\smoke_speech_firefox.py "C:\Program Files\Mozilla Firefox\firefox.exe"` checks an existing Firefox installation. Each uses a disposable profile, fake microphone, real UI/recorder scripts, and a synthetic transcription response. They check native-rate capture, valid 16 kHz WAV output, draft preservation, and microphone release, without accessing a real microphone, user workspace, or model. These are narrow optional regressions, not a browser sweep to run after every edit.
 
 - `.venv\Scripts\python.exe tests\smoke_speech.py --run` uses the installed Windows voice to synthesize a fixed sentence in memory, then runs Granite **once** against already-installed assets. It reads no private workspace or microphone and reports cold transcription latency. This is a developer smoke tool, not a text-to-speech app feature or an assessment of the user's speech.
 
 - `.venv\Scripts\python.exe tests\smoke_ollama.py --model Lyra:latest` runs two structured local-model requests against a synthetic profile in a temporary encrypted database, then removes it. Add **`--chat-only`** to check one real streaming reply instead, including complete-only persistence and no map/proposal mutation. Model variability can cause a safe validation failure; a passing run is not a guarantee of reasoning quality.
-- `tests/smoke_browser.mjs` accepts the Python executable and optionally this machine's **existing shared Chrome executable**. The browser smoke uses a **delayed fake streaming provider** in `tests/browser_server.py` and a **temporary encrypted database** to exercise streaming, split UTF-8/NDJSON, Enter/Shift+Enter and IME guards, next-draft entry, failure/retry, a lost completion after a saved answer, scroll preservation, manual handoff, explicit review, safe text rendering, narrow layouts, and reload persistence. It uses temporary browser/profile directories, never downloads a browser, never uses Edge, and never invokes a real model. Optional `PIP_SMOKE_SCREENSHOT` writes a synthetic desktop screenshot to the supplied file path.
+- `node tests/smoke_browser.mjs .venv/Scripts/python.exe` uses the configured `CHROME_EXECUTABLE_PATH`; an optional second positional argument can override it with an absolute path to an existing Chrome/Chromium executable. The browser smoke uses a **delayed fake streaming provider** in `tests/browser_server.py` and a **temporary encrypted database** to exercise streaming, split UTF-8/NDJSON, Enter/Shift+Enter and IME guards, next-draft entry, failure/retry, a lost completion after a saved answer, scroll preservation, manual handoff, explicit review, safe text rendering, narrow layouts, and reload persistence. It uses temporary browser/profile directories, never downloads a browser, never uses Edge, and never invokes a real model. Optional `PIP_SMOKE_SCREENSHOT` writes a synthetic desktop screenshot to the supplied file path.
 
 Modules:
 

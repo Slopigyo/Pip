@@ -64,6 +64,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(workspace.map_version, 0)
         self.assertEqual(len(workspace.messages), 2)
         self.assertEqual(len(workspace.proposals), 1)
+        self.assertEqual(workspace.proposals[0].repaired_document_statement_indices, [])
         self.assertGreater(revision, self.revision)
 
     def test_acceptance_preserves_inference_and_evidence(self):

@@ -453,7 +453,7 @@ class SourceTests(unittest.TestCase):
         old = staged.model_dump()
         del old["proposals"][0]["repaired_document_statement_indices"]
         self.assertEqual(Workspace.model_validate(old), staged)
-        for indices in ([1], [0, 0], [-1]):
+        for indices in ([1], [0, 0], [-1], [False], [0.0], ["0"]):
             data = staged.model_dump()
             data["proposals"][0]["repaired_document_statement_indices"] = indices
             with self.subTest(indices=indices), self.assertRaises(ValidationError):

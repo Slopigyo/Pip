@@ -7,6 +7,8 @@ name = "jobwolf-bench"
 version = "0.2.0"
 description = "A Windows-local, private Person Map and insight workbench"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "fastapi==0.141.1",

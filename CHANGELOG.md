@@ -2,6 +2,20 @@
 
 Pip — Personal Insight Pathfinder. Versions describe the local prototype, not a packaged public release. The Python package and storage identifiers retain the `jobwolf` name.
 
+## Unreleased
+
+### Public repository preparation
+
+- Adopt Apache-2.0 for project-authored code and documentation, with package license metadata and separate third-party/model licensing guidance.
+- Make the README a concise project overview; preserve the extended product vision and original concept/design documents.
+- Add contribution and security guidance, a synthetic-data portfolio demo, and a publication checklist.
+- Add a Windows GitHub Actions workflow for deterministic Python and mocked JavaScript checks, without model downloads or live inference.
+- Make optional Chrome smoke checks use an explicitly configured existing executable instead of a developer-specific home path; retain disposable profiles and the no-Edge/no-download safeguards.
+
+### Fixed
+
+- Define the missing `Proposal.repaired_document_statement_indices` review metadata so structured proposals no longer fail strict-schema validation. Require distinct, in-range, nonnegative integer indices; keep the field application-owned and default it to an empty list for older workspaces. Evidence validation and explicit acceptance remain unchanged; no workspace reset or migration is required. Focused regression checks passed; see [validation status](docs/PUBLISHING.md#validation-status).
+
 ## 0.2.0 — 2026-10-29
 
 ### Prototype milestones

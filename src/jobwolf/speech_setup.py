@@ -560,7 +560,7 @@ def install(directory: Path) -> None:
         print(f"  {asset.filename}: {asset.size:,} bytes")
     print("Sources: GitHub / Hugging Face and their approved public HTTPS CDNs.")
     print("No credentials, proxies, private data, model execution, or driver/package installs.")
-    print("Granite: Apache-2.0; llama.cpp: MIT plus bundled notices. No JobWolf license grant.", flush=True)
+    print("Granite: Apache-2.0; llama.cpp: MIT plus bundled notices. Pip's own code: Apache-2.0; see LICENSE.", flush=True)
     _check_runtime_ownership(directory / RUNTIME_DIR_NAME)
     _make_directory(directory)
     with _install_lock(directory):

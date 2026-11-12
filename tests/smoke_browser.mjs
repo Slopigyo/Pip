@@ -1,22 +1,26 @@
 // Opt-in, dependency-free Windows/Chrome smoke test (Node 22+).
-// node tests/smoke_browser.mjs <python-executable> [<shared-chrome-executable>]
-// Only the shared Chrome below is permitted; never download a browser, use Edge,
-// or open an existing browser profile/workspace. All content/provider output is synthetic.
+// node tests/smoke_browser.mjs <python-executable> [<chrome-or-chromium-executable>]
+// Otherwise set CHROME_EXECUTABLE_PATH to an absolute Chrome/Chromium executable path.
+// Use an existing installation; never download a browser, use Edge, or open an
+// existing browser profile/workspace. All content/provider output is synthetic.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { basename, isAbsolute, resolve, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const chrome = "C:/Users/S/AppData/Local/ms-playwright/chromium-1243/chrome-win64/chrome.exe";
 const [python, requestedChrome, ...extra] = process.argv.slice(2);
-if (!python || extra.length) throw new Error("Supply a Python executable; the shared Chrome path is optional.");
+if (!python || extra.length) throw new Error("Supply a Python executable and optionally an absolute Chrome/Chromium executable path.");
 if (process.platform !== "win32") throw new Error("This smoke requires Windows DPAPI; no plaintext fallback is allowed.");
-if (requestedChrome && resolve(requestedChrome).toLowerCase() !== resolve(chrome).toLowerCase()) {
-  throw new Error(`Only the shared Chrome is permitted: ${chrome}`);
+const configuredChrome = requestedChrome ?? process.env.CHROME_EXECUTABLE_PATH;
+if (!configuredChrome || !isAbsolute(configuredChrome) || !/^(chrome|chromium)\.exe$/i.test(basename(configuredChrome))) {
+  throw new Error("Provide an absolute chrome.exe/chromium.exe path via CHROME_EXECUTABLE_PATH or the optional argument. Edge is not permitted.");
 }
-await access(chrome);
+const chrome = await realpath(configuredChrome);
+if (!/^(chrome|chromium)\.exe$/i.test(basename(chrome)) || !(await stat(chrome)).isFile()) {
+  throw new Error("The configured path must resolve to an existing Chrome/Chromium executable, not Edge or a launcher.");
+}
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "jobwolf-browser-"));
 let server, browser, ws, origin, token, deadlineTimer, fatal;

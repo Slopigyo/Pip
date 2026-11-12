@@ -1,16 +1,24 @@
 // Focused opt-in Chrome capture check; no real microphone, model, or user workspace.
 // node tests/smoke_speech_capture.mjs <python-executable>
+// Set CHROME_EXECUTABLE_PATH to an absolute Chrome/Chromium executable path.
+// Use an existing installation; never download a browser, use Edge, or open an existing profile.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const [python, ...extra] = process.argv.slice(2);
 assert.ok(python && !extra.length, "Supply the bench Python executable.");
-const chrome = "C:/Users/S/AppData/Local/ms-playwright/chromium-1243/chrome-win64/chrome.exe";
-await access(chrome);
+const configuredChrome = process.env.CHROME_EXECUTABLE_PATH;
+if (!configuredChrome || !isAbsolute(configuredChrome) || !/^(chrome|chromium)\.exe$/i.test(basename(configuredChrome))) {
+  throw new Error("Set CHROME_EXECUTABLE_PATH to an absolute chrome.exe/chromium.exe path. Edge is not permitted.");
+}
+const chrome = await realpath(configuredChrome);
+if (!/^(chrome|chromium)\.exe$/i.test(basename(chrome)) || !(await stat(chrome)).isFile()) {
+  throw new Error("The configured path must resolve to an existing Chrome/Chromium executable, not Edge or a launcher.");
+}
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "jobwolf-browser-"));
 const pending = new Map();

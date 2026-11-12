@@ -1,6 +1,6 @@
 # Dependency and licensing choices
 
-The project license is **not selected by this prototype**. There is no license grant for JobWolf's own code in this document. These dependency choices are intended to preserve future permissive, copyleft, or proprietary application licensing options, subject to normal third-party notices and distribution obligations. This is an engineering inventory, not a legal guarantee for every future distribution.
+Pip's project-authored code and documentation are licensed under **Apache-2.0**; see [LICENSE](../LICENSE). Dependencies, model weights, datasets, and external services retain their own terms. The project license does not relicense them or grant subscription/API access. These choices favor permissive dependencies and avoid a required paid backend; normal third-party notices and distribution obligations still apply. This is an engineering inventory, not a legal guarantee for every future distribution.
 
 ## Runtime
 
@@ -38,7 +38,7 @@ Granite dictation adds **no Python/pip dependency**. The explicit `setup-speech.
 | llama.cpp Windows x64 Vulkan runtime | MIT upstream; release `b11935`, `llama-b11935-bin-win-vulkan-x64.zip` | Short-lived local speech inference, compatible with AMD Vulkan |
 | Browser Web Audio / AudioWorklet / microphone APIs | Browser-provided web platform | Local PCM capture; no hosted SpeechRecognition service |
 
-Setup retains the complete verified runtime archive contents, including upstream notices, and adds llama.cpp's MIT text plus the model's Apache-2.0 license and an installer attribution. Model card: [Granite Speech 5.0 2B](https://huggingface.co/ibm-granite/granite-speech-5.0-2b); runtime: [llama.cpp b11935](https://github.com/ggml-org/llama.cpp/releases/tag/b11935). The model card's weight license is not a blanket license to reuse its training datasets. Before distributing a combined installer, audit the **exact bundled binaries and their third-party components/notices**, not only the top-level repository licenses. These choices do not select a license for Pip or guarantee compatibility with every possible distribution.
+Setup retains the complete verified runtime archive contents, including upstream notices, and adds llama.cpp's MIT text plus the model's Apache-2.0 license and an installer attribution. Model card: [Granite Speech 5.0 2B](https://huggingface.co/ibm-granite/granite-speech-5.0-2b); runtime: [llama.cpp b11935](https://github.com/ggml-org/llama.cpp/releases/tag/b11935). The model card's weight license is not a blanket license to reuse its training datasets. Before distributing a combined installer, audit the **exact bundled binaries and their third-party components/notices**, not only the top-level repository licenses. Pip's separate Apache-2.0 license does not replace these third-party terms or guarantee compatibility with every possible distribution.
 
 The Windows/AMD graphics driver is a user-installed platform prerequisite, not a bundled project dependency. No PyTorch, CUDA, cloud speech SDK, FFmpeg distribution, or paid transcription service is added. Runtime failure never falls back to a hosted model.
 
@@ -46,7 +46,7 @@ The Windows/AMD graphics driver is a user-installed platform prerequisite, not a
 
 Setuptools (MIT) builds the package. HTTPX (BSD-3-Clause) is an optional test dependency for FastAPI's TestClient; its dependencies include httpcore (BSD-3-Clause) and certifi (MPL-2.0). **Certifi is not a runtime dependency of the bench.** MPL-2.0 is file-level copyleft, not a requirement to relicense the whole application, but distributions containing it must still satisfy its terms. The stable HTTPX test path currently emits a Starlette deprecation warning; it works without adopting another client library for this prototype.
 
-The browser interface is plain project-authored HTML/CSS/JavaScript. Node, if installed, is used only for syntax checks or optional browser smoke tests, not to run the app.
+The browser interface is plain project-authored HTML/CSS/JavaScript. Node, if installed, is used only for syntax checks, mocked speech UI tests, and optional browser smoke tests, not to run the app. The GitHub Actions workflow uses Windows, Python 3.14, and Node 24 for deterministic checks; it does not download models or run browser/microphone/GPU tests.
 
 ## Important distinction: model and service licenses
 
